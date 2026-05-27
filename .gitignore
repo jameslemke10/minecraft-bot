@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+.DS_Store
+
+# Minecraft server runtime data (created by docker volume)
+server/data/

@@ -1,0 +1,37 @@
+services:
+  minecraft:
+    image: itzg/minecraft-server:java21
+    container_name: minecraft-bot-server
+    ports:
+      - "25565:25565"
+    environment:
+      EULA: "TRUE"
+      TYPE: "PAPER"
+      VERSION: "1.20.4"
+      ONLINE_MODE: "FALSE"
+      MEMORY: "2G"
+      DIFFICULTY: "peaceful"
+      MODE: "creative"
+      MAX_PLAYERS: "4"
+      VIEW_DISTANCE: "8"
+      SPAWN_PROTECTION: "0"
+      ALLOW_FLIGHT: "TRUE"
+      MOTD: "Minecraft Bot Dev Server"
+      # World generation: superflat plains with trees & grass features.
+      # - No caves, ravines, oceans, or terrain holes for the bot to fall into.
+      # - `features: true` gives scattered oak trees and decorations.
+      # - Layers fill from world min (y=-64) up. 1 bedrock + 124 stone + 3 dirt
+      #   + 1 grass = grass surface at y=64 (standard Minecraft surface height).
+      # - To pick a different world, bump LEVEL (forces regen) and run
+      #   `pnpm server:reset`. For varied terrain, remove LEVEL_TYPE +
+      #   GENERATOR_SETTINGS and add a SEED instead.
+      LEVEL: "bot-world-flat2"
+      LEVEL_TYPE: "minecraft:flat"
+      GENERATOR_SETTINGS: '{"biome":"minecraft:plains","lakes":false,"features":true,"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":124},{"block":"minecraft:dirt","height":3},{"block":"minecraft:grass_block","height":1}]}'
+      # Auto-op the bot so it can teleport itself / use commands later
+      OPS: "ClaudeBot"
+    tty: true
+    stdin_open: true
+    restart: unless-stopped
+    volumes:
+      - ./data:/data
