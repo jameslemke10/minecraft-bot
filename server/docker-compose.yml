@@ -29,7 +29,7 @@ services:
       LEVEL_TYPE: "minecraft:flat"
       GENERATOR_SETTINGS: '{"biome":"minecraft:plains","lakes":false,"features":true,"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":124},{"block":"minecraft:dirt","height":3},{"block":"minecraft:grass_block","height":1}]}'
       # Auto-op the bot so it can teleport itself / use commands later
-      OPS: "ClaudeBot"
+      OPS: "Atticus"
     tty: true
     stdin_open: true
     restart: unless-stopped

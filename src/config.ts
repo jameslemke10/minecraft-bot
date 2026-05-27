@@ -6,7 +6,7 @@ const ConfigSchema = z.object({
     host: z.string().default('localhost'),
     port: z.coerce.number().int().positive().default(25565),
     version: z.string().default('1.20.4'),
-    username: z.string().default('ClaudeBot'),
+    username: z.string().default('Atticus'),
   }),
   gemini: z.object({
     apiKey: z.string().optional(),
