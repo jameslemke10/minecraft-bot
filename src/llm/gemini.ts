@@ -1,4 +1,4 @@
-import { GoogleGenAI } from '@google/genai'
+import { GoogleGenAI, type Schema } from '@google/genai'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
 
@@ -24,6 +24,8 @@ export interface CompleteOpts {
   system: string
   /** Per-call user-facing prompt content. */
   user: string
+  /** Override the default model (defaults to config.gemini.model). */
+  model?: string
 }
 
 export interface CompleteResult {
@@ -31,24 +33,76 @@ export interface CompleteResult {
   inputTokens: number
   outputTokens: number
   latencyMs: number
+  model: string
+}
+
+export interface CompleteJsonOpts<T> extends CompleteOpts {
+  /** A Gemini Schema describing the expected JSON shape. */
+  schema: Schema
+  /** Optional runtime validator — runs after parse, throws on mismatch. */
+  validate?: (parsed: unknown) => T
+}
+
+export interface CompleteJsonResult<T> extends CompleteResult {
+  data: T
 }
 
 /**
- * One-shot text completion. Returns plain text. Retries on transient errors
- * (rate limits, 5xx) with exponential backoff. All calls log token usage +
- * latency so cost stays observable from day one.
+ * Plain-text completion. Retries on transient errors (rate limits, 5xx).
+ * Logs caller, model, tokens, and latency for cost observability.
  */
 export async function complete(opts: CompleteOpts): Promise<CompleteResult> {
+  const model = opts.model ?? config.gemini.model
+  return callGemini({ ...opts, model })
+}
+
+/**
+ * JSON-structured completion. Forces Gemini into JSON-mode with the given
+ * schema, parses the response, and (optionally) runtime-validates it.
+ * Returns the parsed `data` alongside the raw text and usage stats.
+ */
+export async function completeJson<T = unknown>(
+  opts: CompleteJsonOpts<T>
+): Promise<CompleteJsonResult<T>> {
+  const model = opts.model ?? config.gemini.model
+  const raw = await callGemini({
+    ...opts,
+    model,
+    responseMimeType: 'application/json',
+    responseSchema: opts.schema,
+  })
+
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw.text)
+  } catch (err) {
+    logger.error({ caller: opts.caller, text: raw.text.slice(0, 500) }, 'JSON parse failed')
+    throw new Error(`completeJson: response was not valid JSON: ${String(err)}`)
+  }
+
+  const data = (opts.validate ? opts.validate(parsed) : (parsed as T))
+  return { ...raw, data }
+}
+
+interface CallOpts extends CompleteOpts {
+  model: string
+  responseMimeType?: string
+  responseSchema?: Schema
+}
+
+async function callGemini(opts: CallOpts): Promise<CompleteResult> {
   const start = Date.now()
   let lastErr: unknown
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     try {
       const resp = await getClient().models.generateContent({
-        model: config.gemini.model,
+        model: opts.model,
         contents: opts.user,
         config: {
           systemInstruction: opts.system,
+          ...(opts.responseMimeType ? { responseMimeType: opts.responseMimeType } : {}),
+          ...(opts.responseSchema ? { responseSchema: opts.responseSchema } : {}),
         },
       })
 
@@ -59,14 +113,17 @@ export async function complete(opts: CompleteOpts): Promise<CompleteResult> {
         inputTokens: usage?.promptTokenCount ?? 0,
         outputTokens: usage?.candidatesTokenCount ?? 0,
         latencyMs: Date.now() - start,
+        model: opts.model,
       }
 
       logger.info(
         {
           caller: opts.caller,
+          model: opts.model,
           inputTokens: result.inputTokens,
           outputTokens: result.outputTokens,
           latencyMs: result.latencyMs,
+          structured: Boolean(opts.responseSchema),
         },
         'gemini call'
       )
@@ -77,7 +134,13 @@ export async function complete(opts: CompleteOpts): Promise<CompleteResult> {
       if (!isRetryable(err) || attempt === MAX_RETRIES - 1) break
       const backoff = INITIAL_BACKOFF_MS * 2 ** attempt
       logger.warn(
-        { caller: opts.caller, attempt: attempt + 1, backoffMs: backoff, err: String(err) },
+        {
+          caller: opts.caller,
+          model: opts.model,
+          attempt: attempt + 1,
+          backoffMs: backoff,
+          err: String(err),
+        },
         'gemini call failed, retrying'
       )
       await sleep(backoff)

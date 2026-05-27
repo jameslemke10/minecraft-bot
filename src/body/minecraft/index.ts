@@ -1,29 +1,23 @@
 import mineflayer, { type Bot } from 'mineflayer'
 import pathfinderPkg from 'mineflayer-pathfinder'
 import prismarineViewerPkg from 'prismarine-viewer'
-import { config } from '../config.js'
-import { logger } from '../logger.js'
+import { config } from '../../config.js'
+import { logger } from '../../logger.js'
+import type { Body } from '../types.js'
+import type { Action } from '../../brain/types.js'
 import { WorldState } from './world-state.js'
 import { attachPerception } from './perception.js'
 import { execute, type ExecuteDeps } from './execute.js'
-import type { Action } from '../brain/types.js'
+import { buildRawPercept } from './sensors/index.js'
 
 const { pathfinder, Movements } = pathfinderPkg
 const { mineflayer: mineflayerViewer } = prismarineViewerPkg
 
-export interface Body {
-  bot: Bot
-  world: WorldState
-  snapshot: () => ReturnType<WorldState['snapshot']>
-  execute: (action: Action) => Promise<void>
-  disconnect: () => void
-}
-
 /**
- * Create the bot, connect to the server, wire perception, and resolve once
- * the bot has fully spawned (so the caller can immediately use the body).
+ * Create the Minecraft Body — implements the env-agnostic Body interface.
+ * Connects to the server, wires perception, exposes sense() and execute().
  */
-export async function createBody(): Promise<Body> {
+export async function createMinecraftBody(): Promise<Body<Action>> {
   logger.info(
     { host: config.mc.host, port: config.mc.port, version: config.mc.version },
     'connecting to minecraft server'
@@ -45,7 +39,7 @@ export async function createBody(): Promise<Body> {
   await waitForSpawn(bot)
 
   const movements = new Movements(bot)
-  movements.canDig = false // safer default for M1
+  movements.canDig = false
   const deps: ExecuteDeps = { bot, movements }
 
   if (config.viewer.enabled) {
@@ -55,17 +49,18 @@ export async function createBody(): Promise<Body> {
 
   logger.info(
     {
-      position: world.position,
-      health: world.health,
+      position: bot.entity.position,
+      health: bot.health,
       username: bot.username,
     },
     'bot spawned'
   )
 
+  let tick = 0
+
   return {
-    bot,
-    world,
-    snapshot: () => world.snapshot(),
+    envName: 'minecraft',
+    sense: async () => buildRawPercept(bot, world, tick++),
     execute: (action) => execute(deps, action),
     disconnect: () => bot.quit('disconnecting'),
   }

@@ -1,8 +1,8 @@
 import type { Bot } from 'mineflayer'
 import pathfinderPkg from 'mineflayer-pathfinder'
 import type { Movements } from 'mineflayer-pathfinder'
-import { ActionSchema, type Action } from '../brain/types.js'
-import { logger } from '../logger.js'
+import { ActionSchema, type Action } from '../../brain/types.js'
+import { logger } from '../../logger.js'
 
 const { goals } = pathfinderPkg
 

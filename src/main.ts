@@ -1,51 +1,15 @@
-import { createBody } from './body/bot.js'
-import { runLoop } from './loop.js'
+import { createMinecraftBody } from './body/minecraft/index.js'
 import { logger } from './logger.js'
-import { perceive } from './brain/perceiver.js'
-import type { Action, Brain, WorldSnapshot } from './brain/types.js'
-
-/**
- * Wander-brain (from M1): no LLM, just nudges Atticus around a square so the
- * world keeps changing while the Perceiver narrates.
- */
-const wanderBrain: Brain = async (snap) => {
-  const corners: Array<{ x: number; z: number }> = [
-    { x: snap.position.x + 5, z: snap.position.z },
-    { x: snap.position.x + 5, z: snap.position.z + 5 },
-    { x: snap.position.x, z: snap.position.z + 5 },
-    { x: snap.position.x, z: snap.position.z },
-  ]
-  const target = corners[snap.tick % corners.length]!
-  const actions: Action[] = [{ kind: 'move', args: { x: target.x, z: target.z } }]
-  return actions
-}
-
-/**
- * Perceiver-brain: calls Gemini to describe Atticus's experience, logs it,
- * returns no actions. Errors are logged but don't break the loop.
- */
-const perceiverBrain: Brain = async (snap) => {
-  try {
-    const observation = await perceive(snap)
-    logger.info({ obs: observation, pos: snap.position }, 'Atticus perceives')
-  } catch (err) {
-    logger.warn({ err: String(err) }, 'perceiver failed')
-  }
-  return []
-}
-
-/**
- * M2 brain: wander and perceive in parallel. Two independent functions
- * composed with Promise.all — this *is* parallel brain functions, no
- * framework required.
- */
-const brain: Brain = async (snap: WorldSnapshot) => {
-  const [, actions] = await Promise.all([perceiverBrain(snap), wanderBrain(snap)])
-  return actions
-}
+import { ATTICUS_IDENTITY } from './brain/identity.js'
+import { Workspace, selfFromPercept } from './brain/workspace.js'
+import { runBrain } from './brain/schedule.js'
 
 async function main(): Promise<void> {
-  const body = await createBody()
+  const body = await createMinecraftBody()
+
+  // Initialize working memory from a first sense() so `self` is real.
+  const initial = await body.sense()
+  const workspace = new Workspace(ATTICUS_IDENTITY, selfFromPercept(initial))
 
   const shutdown = (signal: string): void => {
     logger.info({ signal }, 'shutting down')
@@ -55,7 +19,7 @@ async function main(): Promise<void> {
   process.on('SIGINT', () => shutdown('SIGINT'))
   process.on('SIGTERM', () => shutdown('SIGTERM'))
 
-  await runLoop(body, brain)
+  await runBrain(body, workspace)
 }
 
 main().catch((err: unknown) => {

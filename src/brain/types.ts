@@ -1,42 +1,11 @@
 import { z } from 'zod'
+import type { RawPercept, Vec3 } from '../body/types.js'
 
-export const Vec3Schema = z.object({
-  x: z.number(),
-  y: z.number(),
-  z: z.number(),
-})
-export type Vec3 = z.infer<typeof Vec3Schema>
+// Re-export Vec3 so brain consumers can import it from one place.
+export type { Vec3 } from '../body/types.js'
+export type { RawPercept } from '../body/types.js'
 
-export const InventoryItemSchema = z.object({
-  name: z.string(),
-  count: z.number().int().nonnegative(),
-  slot: z.number().int().nonnegative(),
-})
-export type InventoryItem = z.infer<typeof InventoryItemSchema>
-
-export const NearbyEntitySchema = z.object({
-  id: z.number(),
-  name: z.string(),
-  type: z.string(),
-  position: Vec3Schema,
-  distance: z.number().nonnegative(),
-})
-export type NearbyEntity = z.infer<typeof NearbyEntitySchema>
-
-export const WorldSnapshotSchema = z.object({
-  tick: z.number().int().nonnegative(),
-  timestamp: z.number(),
-  position: Vec3Schema,
-  yaw: z.number(),
-  pitch: z.number(),
-  health: z.number(),
-  food: z.number(),
-  inventory: z.array(InventoryItemSchema),
-  nearbyEntities: z.array(NearbyEntitySchema),
-  recentEvents: z.array(z.string()),
-  goal: z.string(),
-})
-export type WorldSnapshot = z.infer<typeof WorldSnapshotSchema>
+// --- Actions (what the brain produces, what the body consumes) ---
 
 export const MoveActionSchema = z.object({
   kind: z.literal('move'),
@@ -67,4 +36,46 @@ export const ActionSchema = z.discriminatedUnion('kind', [
 ])
 export type Action = z.infer<typeof ActionSchema>
 
-export type Brain = (snapshot: WorldSnapshot) => Promise<Action[]>
+// --- Working Memory (the brain's shared workspace) ---
+
+export interface SalientItem {
+  what: string
+  where: string
+  distance: number | null
+  why: string
+}
+
+export interface Thought {
+  tick: number
+  text: string
+  intention: string
+  action?: Action
+}
+
+export interface WorkingMemorySelf {
+  position: Vec3
+  yaw: number
+  pitch: number
+  health: number
+  food: number
+  on_ground: boolean
+  in_water: boolean
+}
+
+export interface WorkingMemory {
+  identity: string
+  self: WorkingMemorySelf
+  salient: SalientItem[]
+  recent_thoughts: Thought[]
+  intention: string
+  tick: number
+  timestamp: number
+}
+
+// --- Brain function type ---
+
+/**
+ * A brain is a function: percept → actions. Composition (serial, parallel)
+ * lives at the call site. No interface required for v1.
+ */
+export type Brain = (percept: RawPercept) => Promise<Action[]>
