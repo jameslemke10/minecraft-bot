@@ -1,7 +1,8 @@
 import { GoogleGenAI, type Schema } from '@google/genai'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
-import { metrics } from './metrics.js'
+import type { Metrics } from './metrics.js'
+import type { RunLog } from '../agents/run-log.js'
 
 const MAX_RETRIES = 3
 const INITIAL_BACKOFF_MS = 500
@@ -21,12 +22,16 @@ function getClient(): GoogleGenAI {
 export interface CompleteOpts {
   /** Which brain module is calling — used in logs for cost attribution. */
   caller: string
+  /** Per-agent metrics sink. Required so costs stay isolated per agent. */
+  metrics: Metrics
   /** System-level identity / instruction prompt. */
   system: string
   /** Per-call user-facing prompt content. */
   user: string
   /** Override the default model (defaults to config.gemini.model). */
   model?: string
+  /** Optional run log — persists full prompt/response to llm.jsonl. */
+  runLog?: RunLog
 }
 
 export interface CompleteResult {
@@ -117,13 +122,24 @@ async function callGemini(opts: CallOpts): Promise<CompleteResult> {
         model: opts.model,
       }
 
-      metrics.record(
+      opts.metrics.record(
         opts.caller,
         opts.model,
         result.inputTokens,
         result.outputTokens,
         result.latencyMs
       )
+
+      opts.runLog?.recordLlm({
+        caller: opts.caller,
+        model: opts.model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        latencyMs: result.latencyMs,
+        system: opts.system,
+        user: opts.user,
+        response: text,
+      })
 
       logger.info(
         {

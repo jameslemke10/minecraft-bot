@@ -1,5 +1,5 @@
 import type { Bot } from 'mineflayer'
-import type { Motion, SelfPercept } from '../../types.js'
+import type { Motion, SelfPercept } from '../../../../../body/types.js'
 
 /**
  * Proprioception: where Atticus is, how he's oriented, his vitals.

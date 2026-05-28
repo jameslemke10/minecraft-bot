@@ -1,5 +1,5 @@
 import type { Bot } from 'mineflayer'
-import type { RawPercept } from '../../types.js'
+import type { RawPercept } from '../../../../../body/types.js'
 import type { WorldState } from '../world-state.js'
 import { senseSelf } from './self.js'
 import { senseEntities } from './entities.js'

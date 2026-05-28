@@ -1,10 +1,16 @@
 import mineflayer, { type Bot } from 'mineflayer'
 import pathfinderPkg from 'mineflayer-pathfinder'
-import prismarineViewerPkg from 'prismarine-viewer'
-import { config } from '../../config.js'
-import { logger } from '../../logger.js'
-import type { ActionDoc, Body } from '../types.js'
-import type { Action } from '../../brain/types.js'
+import { config } from '../../../../config.js'
+import { logger } from '../../../../logger.js'
+import type { ActionDoc, Body } from '../../../../body/types.js'
+import type { Action } from '../../../../brain/types.js'
+import { disconnectBot, startViewerSafe } from '../../../../body/viewer.js'
+import type { MinecraftBodyOptions } from '../../../types.js'
+import { WorldState } from './world-state.js'
+import { attachPerception } from './perception.js'
+import { execute, type ExecuteDeps } from './execute.js'
+import { describeBodyHints } from '../../../../body/minecraft/body-hints.js'
+import { buildRawPercept } from './sensors/index.js'
 
 const MINECRAFT_ACTIONS: readonly ActionDoc[] = [
   {
@@ -30,7 +36,7 @@ const MINECRAFT_ACTIONS: readonly ActionDoc[] = [
     name: 'mine',
     signature: 'mine(x, y, z)',
     description:
-      'Walk to within reach of the block at (x,y,z) and break it. You need the right tool for hard blocks (wood for wood, pickaxe for stone and ores). Without a tool you can still punch wood and dirt slowly.',
+      'Break a block at (x,y,z). Use ONLY coordinates from "Mineable now" in your prompt — those are blocks in reach right now.',
   },
   {
     name: 'place',
@@ -42,7 +48,7 @@ const MINECRAFT_ACTIONS: readonly ActionDoc[] = [
     name: 'craft',
     signature: 'craft(item, count?)',
     description:
-      'Craft an item by name. Some recipes (planks, sticks) work from your 2x2 inventory grid; tools and most things need you to be next to a crafting_table. Use exact item names (e.g. "oak_planks", "stick", "crafting_table", "wooden_pickaxe").',
+      'Craft an item by name. See "Craftable now" in your prompt for exact items and ingredients you can make right now.',
   },
   {
     name: 'equip',
@@ -68,21 +74,23 @@ const MINECRAFT_ACTIONS: readonly ActionDoc[] = [
       'Walk to the nearest bed and sleep. Only works at night and only if the area is safe.',
   },
 ]
-import { WorldState } from './world-state.js'
-import { attachPerception } from './perception.js'
-import { execute, type ExecuteDeps } from './execute.js'
-import { buildRawPercept } from './sensors/index.js'
 
 const { pathfinder, Movements } = pathfinderPkg
-const { mineflayer: mineflayerViewer } = prismarineViewerPkg
 
 /**
  * Create the Minecraft Body — implements the env-agnostic Body interface.
  * Connects to the server, wires perception, exposes sense() and execute().
  */
-export async function createMinecraftBody(): Promise<Body<Action>> {
+export async function createMinecraftBody(
+  opts: MinecraftBodyOptions
+): Promise<Body<Action>> {
   logger.info(
-    { host: config.mc.host, port: config.mc.port, version: config.mc.version },
+    {
+      host: config.mc.host,
+      port: config.mc.port,
+      version: config.mc.version,
+      username: opts.username,
+    },
     'connecting to minecraft server'
   )
 
@@ -90,7 +98,7 @@ export async function createMinecraftBody(): Promise<Body<Action>> {
     host: config.mc.host,
     port: config.mc.port,
     version: config.mc.version,
-    username: config.mc.username,
+    username: opts.username,
     auth: 'offline',
   })
 
@@ -100,24 +108,20 @@ export async function createMinecraftBody(): Promise<Body<Action>> {
   attachPerception(bot, world)
 
   await waitForSpawn(bot)
-  // Don't start sensing until the surrounding chunks exist, otherwise the
-  // first percepts read empty/air for the whole world.
   try {
     await bot.waitForChunksToLoad()
   } catch (err) {
     logger.warn({ err: String(err) }, 'waitForChunksToLoad failed — continuing')
   }
-  // Let physics settle so the brain doesn't start mid-fall and convince
-  // itself it's "falling" while the spawn drop completes.
   await settleOnGround(bot)
 
   const movements = new Movements(bot)
   movements.canDig = false
   const deps: ExecuteDeps = { bot, movements }
 
-  if (config.viewer.enabled) {
-    startViewer(bot, config.viewer.thirdPersonPort, false)
-    startViewer(bot, config.viewer.firstPersonPort, true)
+  if (opts.viewer.enabled) {
+    await startViewerSafe(bot, opts.viewer.thirdPersonPort, false)
+    await startViewerSafe(bot, opts.viewer.firstPersonPort, true)
   }
 
   logger.info(
@@ -135,20 +139,9 @@ export async function createMinecraftBody(): Promise<Body<Action>> {
     envName: 'minecraft',
     sense: async () => buildRawPercept(bot, world, tick++),
     execute: (action) => execute(deps, action),
-    disconnect: () => bot.quit('disconnecting'),
+    describeBodyHints: async (ctx) => describeBodyHints(bot, ctx),
+    disconnect: () => disconnectBot(bot),
     describeActions: () => MINECRAFT_ACTIONS,
-  }
-}
-
-function startViewer(bot: Bot, port: number, firstPerson: boolean): void {
-  try {
-    mineflayerViewer(bot, { port, firstPerson })
-    logger.info(
-      { url: `http://localhost:${port}`, view: firstPerson ? 'first-person' : 'third-person' },
-      'viewer started'
-    )
-  } catch (err) {
-    logger.warn({ err: String(err), port }, 'viewer failed to start')
   }
 }
 

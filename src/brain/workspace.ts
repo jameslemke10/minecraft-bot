@@ -7,6 +7,7 @@ import type {
   WorkingMemory,
   WorkingMemorySelf,
 } from './types.js'
+import type { DriveState } from './types.js'
 
 const EVENT_LOG_MAX = 50
 const RECENT_EVENT_DEFAULT = 10
@@ -56,6 +57,7 @@ export class Workspace {
           event_log: (data.event_log as EventLogEntry[] | undefined) ?? [],
           tick: data.tick ?? 0,
           timestamp: data.timestamp ?? Date.now(),
+          ...(data.drive_state ? { drive_state: data.drive_state as DriveState } : {}),
         }
         logger.info(
           { persistPath, tick: wm.tick, events: wm.event_log.length },
@@ -99,6 +101,15 @@ export class Workspace {
   /** PFC sets the new intention each tick. */
   setIntention(intention: string): void {
     this.wm.intention = intention
+    this.persist()
+  }
+
+  getDriveState(): DriveState | null {
+    return this.wm.drive_state ?? null
+  }
+
+  setDriveState(state: DriveState): void {
+    this.wm.drive_state = state
     this.persist()
   }
 

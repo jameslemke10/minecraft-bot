@@ -1,4 +1,4 @@
-import type { ActionDoc, Body, RawPercept, SceneObject } from '../body/types.js'
+import type { ActionDoc, Body, BodyHints, RawPercept, SceneObject } from '../body/types.js'
 import type {
   Action,
   EventLogEntry,
@@ -7,14 +7,21 @@ import type {
   ThalamusOutput,
 } from './types.js'
 import { logger } from '../logger.js'
-import { metrics } from '../llm/metrics.js'
+import type { Metrics } from '../llm/metrics.js'
 import { Workspace, selfFromPercept } from './workspace.js'
 import { attention } from './attention.js'
 import { executive } from './executive.js'
 
 const METRICS_EVERY_TICKS = 10
 
+import type { RunLog } from '../agents/run-log.js'
+
 export interface BrainLoopOptions {
+  agentId: string
+  displayName: string
+  identity: string
+  metrics: Metrics
+  runLog?: RunLog
   /** Stop after N ticks. Omit for unbounded. */
   maxTicks?: number
   /** Pause inserted after EACH brain processor. Default 0. */
@@ -30,9 +37,10 @@ export interface BrainLoopOptions {
 export async function runBrain(
   body: Body<Action>,
   workspace: Workspace,
-  opts: BrainLoopOptions = {}
+  opts: BrainLoopOptions
 ): Promise<void> {
-  const { maxTicks, postProcessorDelayMs = 0 } = opts
+  const { maxTicks, postProcessorDelayMs = 0, agentId, displayName, identity, metrics, runLog } =
+    opts
   const actionMenu = body.describeActions()
   // Resume from where the persisted WM left off so tick numbers stay
   // monotonic across restarts. Fresh WM has lastTick=0 → start at 0.
@@ -54,25 +62,35 @@ export async function runBrain(
 
       // 2. Thalamus: percept + WM slice → ThalamusOutput
       const slice = workspace.sliceForThalamus()
+      const bodyHints = body.describeBodyHints
+        ? await body.describeBodyHints({ intention: slice.intention })
+        : undefined
+
       const att = await attention({
         percept,
         intention: slice.intention,
         recent_events: slice.recent_events,
         action_menu: actionMenu,
+        identity,
+        displayName,
+        metrics,
+        body_hints: bodyHints,
+        runLog,
       })
       logger.info(
         {
+          agent: agentId,
           tick,
           focus: att.focus_refs.map((r) => `${refLabel(r)} — ${r.why}`),
           actions_in_play: att.actions_in_play,
           brief: att.brief,
         },
-        'Atticus notices'
+        `${displayName} notices`
       )
       if (postProcessorDelayMs > 0) await sleep(postProcessorDelayMs)
 
       // 3. Hydrate refs into full FocusItems
-      const focus = hydrateFocus(percept, workspace.eventLog, att.focus_refs)
+      const focus = hydrateFocus(percept, workspace.eventLog, att.focus_refs, bodyHints)
       const menu = filterActionMenu(actionMenu, att.actions_in_play)
 
       // 4. PFC: focus + WM slice + filtered menu → Decision
@@ -84,26 +102,55 @@ export async function runBrain(
         action_menu: menu,
         ...(att.brief ? { brief: att.brief } : {}),
         tick,
+        identity,
+        displayName,
+        metrics,
+        body_hints: bodyHints,
+        runLog,
       })
       workspace.appendEvent(exec.thought)
       workspace.setIntention(exec.intention)
       logger.info(
-        { tick, thought: exec.thought.text, intention: exec.intention, action: exec.action },
-        'Atticus thinks'
+        {
+          agent: agentId,
+          tick,
+          thought: exec.thought.text,
+          intention: exec.intention,
+          action: exec.action,
+        },
+        `${displayName} thinks`
       )
       if (postProcessorDelayMs > 0) await sleep(postProcessorDelayMs)
 
       // 5. Act
+      let actionOutcome: import('../body/action-result.js').ActionResult | undefined
       if (exec.action) {
         workspace.appendEvent({ kind: 'action', tick, action: exec.action })
-        await body.execute(exec.action)
+        actionOutcome = await body.execute(exec.action)
+        workspace.appendEvent({
+          kind: 'action_outcome',
+          tick,
+          action: exec.action,
+          ok: actionOutcome.ok,
+          message: actionOutcome.message,
+        })
       }
+
+      runLog?.recordTick({
+        tick,
+        thalamus: att,
+        thought: exec.thought.text,
+        intention: exec.intention,
+        action: exec.action,
+        ...(actionOutcome ? { action_outcome: actionOutcome } : {}),
+        ...(bodyHints ? { body_hints: bodyHints } : {}),
+      })
     } catch (err) {
-      logger.error({ err: String(err), tick }, 'brain tick failed — skipping')
+      logger.error({ agent: agentId, err: String(err), tick }, 'brain tick failed — skipping')
     }
 
     if ((tick - startTick + 1) % METRICS_EVERY_TICKS === 0) {
-      logger.info(metrics.summary(), 'run metrics (running total)')
+      logger.info({ agent: agentId, ...metrics.summary() }, 'run metrics (running total)')
     }
 
     tick++
@@ -115,11 +162,12 @@ export async function runBrain(
 export function hydrateFocus(
   percept: RawPercept,
   eventLog: readonly EventLogEntry[],
-  refs: readonly FocusRef[]
+  refs: readonly FocusRef[],
+  bodyHints?: BodyHints
 ): FocusItem[] {
   const out: FocusItem[] = []
   for (const r of refs) {
-    const item = resolveRef(percept, eventLog, r)
+    const item = resolveRef(percept, eventLog, r, bodyHints)
     if (item) out.push(item)
     else logger.warn({ ref: r }, 'focus ref unresolved — dropping')
   }
@@ -129,7 +177,8 @@ export function hydrateFocus(
 function resolveRef(
   percept: RawPercept,
   eventLog: readonly EventLogEntry[],
-  r: FocusRef
+  r: FocusRef,
+  bodyHints?: BodyHints
 ): FocusItem | null {
   switch (r.source) {
     case 'scene.objects': {
@@ -172,6 +221,18 @@ function resolveRef(
         source: 'self',
         ref: `self.${field}`,
         data: self[field],
+        why: r.why,
+      }
+    }
+    case 'body.mineable': {
+      if (!bodyHints || bodyHints.mineable.length === 0) return null
+      const id = String(r.id ?? '')
+      const block = bodyHints.mineable.find((m) => m.id === id)
+      if (!block) return null
+      return {
+        source: 'body.mineable',
+        ref: `body.mineable/${block.id}`,
+        data: block,
         why: r.why,
       }
     }

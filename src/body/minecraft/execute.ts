@@ -4,6 +4,7 @@ import type { Movements, goals as GoalsNS } from 'mineflayer-pathfinder'
 import { Vec3 as MFVec3 } from 'vec3'
 import type { Block } from 'prismarine-block'
 import { ActionSchema, type Action } from '../../brain/types.js'
+import { actionFail, actionOk, type ActionResult } from '../action-result.js'
 import { logger } from '../../logger.js'
 
 const { goals } = pathfinderPkg
@@ -17,15 +18,14 @@ export interface ExecuteDeps {
 }
 
 /**
- * Validate an action and dispatch it to mineflayer. Resolves when the action
- * is complete (or has timed out / been rejected). The brain awaits this so
- * the loop is action-driven in v1.
+ * Validate an action and dispatch it to mineflayer. Returns an outcome the
+ * brain can log — failures are visible to the PFC on the next tick.
  */
-export async function execute(deps: ExecuteDeps, raw: unknown): Promise<void> {
+export async function execute(deps: ExecuteDeps, raw: unknown): Promise<ActionResult> {
   const parsed = ActionSchema.safeParse(raw)
   if (!parsed.success) {
     logger.warn({ raw, issues: parsed.error.issues }, 'rejected malformed action')
-    return
+    return actionFail('malformed action')
   }
   const action = parsed.data
   logger.info({ action }, 'executing action')
@@ -33,93 +33,89 @@ export async function execute(deps: ExecuteDeps, raw: unknown): Promise<void> {
   try {
     switch (action.kind) {
       case 'move':
-        await doMove(deps, action)
-        return
+        return await doMove(deps, action)
       case 'chat':
         deps.bot.chat(action.args.msg)
-        return
+        return actionOk('sent chat')
       case 'wait':
         await sleep(action.args.ms)
-        return
+        return actionOk(`waited ${action.args.ms}ms`)
       case 'mine':
-        await doMine(deps, action)
-        return
+        return await doMine(deps, action)
       case 'place':
-        await doPlace(deps, action)
-        return
+        return await doPlace(deps, action)
       case 'craft':
-        await doCraft(deps, action)
-        return
+        return await doCraft(deps, action)
       case 'equip':
-        await doEquip(deps, action)
-        return
+        return await doEquip(deps, action)
       case 'attack':
-        await doAttack(deps, action)
-        return
+        return await doAttack(deps, action)
       case 'eat':
-        await doEat(deps, action)
-        return
+        return await doEat(deps, action)
       case 'sleep':
-        await doSleep(deps)
-        return
+        return await doSleep(deps)
     }
   } catch (err) {
-    logger.warn({ action, err: String(err) }, 'action failed')
+    const msg = String(err)
+    logger.warn({ action, err: msg }, 'action failed')
+    return actionFail(msg)
   }
 }
 
 async function doMove(
   { bot, movements }: ExecuteDeps,
   action: Extract<Action, { kind: 'move' }>
-): Promise<void> {
+): Promise<ActionResult> {
   const { x, z } = action.args
   const me = bot.entity?.position
   if (me && Math.abs(me.x - x) < 1 && Math.abs(me.z - z) < 1) {
     logger.warn({ x, z, currentX: me.x, currentZ: me.z }, 'move: already at target, skipping')
-    return
+    return actionFail('already at target')
   }
   bot.pathfinder.setMovements(movements)
   await runGoal(bot, new goals.GoalNearXZ(x, z, 1), MOVE_TIMEOUT_MS, { x, z })
+  return actionOk('pathfind complete')
 }
 
 async function doMine(
   deps: ExecuteDeps,
   action: Extract<Action, { kind: 'mine' }>
-): Promise<void> {
+): Promise<ActionResult> {
   const { bot } = deps
   const { x, y, z } = action.args
   const pos = new MFVec3(x, y, z)
   const block = bot.blockAt(pos)
   if (!block || block.name === 'air') {
     logger.warn({ x, y, z }, 'mine: no block at coords')
-    return
+    return actionFail('no block at coords')
   }
   await goNear(deps, x, y, z)
   if (!bot.canDigBlock(block)) {
     logger.warn({ x, y, z, name: block.name }, 'mine: cannot dig (out of reach or unbreakable)')
-    return
+    return actionFail('cannot dig (out of reach or unbreakable)')
   }
   await bot.dig(block)
+  return actionOk(`mined ${block.name}`)
 }
 
 async function doPlace(
   deps: ExecuteDeps,
   action: Extract<Action, { kind: 'place' }>
-): Promise<void> {
+): Promise<ActionResult> {
   const { bot } = deps
   const { x, y, z, block: blockName } = action.args
 
   const invItem = bot.inventory.items().find((i) => i.name === blockName)
   if (!invItem) {
     logger.warn({ blockName }, 'place: not in inventory')
-    return
+    return actionFail(`no ${blockName} in inventory`)
   }
 
   const target = new MFVec3(x, y, z)
   const existing = bot.blockAt(target)
   if (existing && existing.name !== 'air') {
     logger.warn({ x, y, z, name: existing.name }, 'place: target already occupied')
-    return
+    return actionFail(`target occupied by ${existing.name}`)
   }
 
   await goNear(deps, x, y, z, INTERACT_REACH + 1)
@@ -128,22 +124,23 @@ async function doPlace(
   const ref = findPlacementReference(bot, target)
   if (!ref) {
     logger.warn({ x, y, z }, 'place: no adjacent solid block to place against')
-    return
+    return actionFail('no adjacent solid block to place against')
   }
   const face = target.minus(ref.position)
   await bot.placeBlock(ref, face)
+  return actionOk(`placed ${blockName}`)
 }
 
 async function doCraft(
   deps: ExecuteDeps,
   action: Extract<Action, { kind: 'craft' }>
-): Promise<void> {
+): Promise<ActionResult> {
   const { bot } = deps
   const { item, count = 1 } = action.args
   const itemData = bot.registry.itemsByName[item]
   if (!itemData) {
     logger.warn({ item }, 'craft: unknown item name')
-    return
+    return actionFail(`unknown item: ${item}`)
   }
 
   let recipes = bot.recipesFor(itemData.id, null, 1, null)
@@ -155,7 +152,7 @@ async function doCraft(
     })
     if (!table) {
       logger.warn({ item }, 'craft: no inventory recipe and no crafting table nearby')
-      return
+      return actionFail('no recipe in inventory grid and no crafting table nearby')
     }
     await goNear(deps, table.position.x, table.position.y, table.position.z)
     recipes = bot.recipesFor(itemData.id, null, 1, table)
@@ -163,54 +160,58 @@ async function doCraft(
   const recipe = recipes[0]
   if (!recipe) {
     logger.warn({ item }, 'craft: no recipe available with current ingredients')
-    return
+    return actionFail('no recipe with current ingredients')
   }
   await bot.craft(recipe, count, table ?? undefined)
+  return actionOk(`crafted ${count}×${item}`)
 }
 
 async function doEquip(
   { bot }: ExecuteDeps,
   action: Extract<Action, { kind: 'equip' }>
-): Promise<void> {
+): Promise<ActionResult> {
   const invItem = bot.inventory.items().find((i) => i.name === action.args.item)
   if (!invItem) {
     logger.warn({ item: action.args.item }, 'equip: not in inventory')
-    return
+    return actionFail(`no ${action.args.item} in inventory`)
   }
   await bot.equip(invItem, 'hand')
+  return actionOk(`equipped ${action.args.item}`)
 }
 
 async function doAttack(
   deps: ExecuteDeps,
   action: Extract<Action, { kind: 'attack' }>
-): Promise<void> {
+): Promise<ActionResult> {
   const { bot } = deps
   const entity = bot.entities[action.args.entityId]
   if (!entity?.position) {
     logger.warn({ entityId: action.args.entityId }, 'attack: entity not in range')
-    return
+    return actionFail('entity not found')
   }
   const { x, y, z } = entity.position
   await goNear(deps, x, y, z, INTERACT_REACH)
   bot.attack(entity)
+  return actionOk('attacked entity')
 }
 
 async function doEat(
   { bot }: ExecuteDeps,
   action: Extract<Action, { kind: 'eat' }>
-): Promise<void> {
+): Promise<ActionResult> {
   if (action.args.item) {
     const invItem = bot.inventory.items().find((i) => i.name === action.args.item)
     if (!invItem) {
       logger.warn({ item: action.args.item }, 'eat: not in inventory')
-      return
+      return actionFail(`no ${action.args.item} in inventory`)
     }
     await bot.equip(invItem, 'hand')
   }
   await bot.consume()
+  return actionOk('ate food')
 }
 
-async function doSleep(deps: ExecuteDeps): Promise<void> {
+async function doSleep(deps: ExecuteDeps): Promise<ActionResult> {
   const { bot } = deps
   const bed = bot.findBlock({
     matching: (b) => b.name.endsWith('_bed'),
@@ -218,10 +219,11 @@ async function doSleep(deps: ExecuteDeps): Promise<void> {
   })
   if (!bed) {
     logger.warn({}, 'sleep: no bed nearby')
-    return
+    return actionFail('no bed nearby')
   }
   await goNear(deps, bed.position.x, bed.position.y, bed.position.z)
   await bot.sleep(bed)
+  return actionOk('sleeping')
 }
 
 function findPlacementReference(bot: Bot, target: MFVec3): Block | null {

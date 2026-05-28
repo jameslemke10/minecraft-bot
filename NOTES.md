@@ -32,9 +32,9 @@ BODY (env-specific)  →  WORKING MEMORY  →  BRAIN MODULES (env-agnostic)
  describeActions()                          (funnel)            (decide)
 ```
 
-- **Body** (`src/body/minecraft/`) — only thing that knows mineflayer exists. Implements `Body<TAction>` from [src/body/types.ts](src/body/types.ts): `sense() → RawPercept`, `execute(action)`, `disconnect()`, `describeActions() → ActionDoc[]`.
+- **Body** (`src/agents/<name>/body/minecraft/`) — only thing that knows mineflayer exists. Each agent owns its body fork; they never merge backward. Implements `Body<TAction>` from [src/body/types.ts](src/body/types.ts): `sense() → RawPercept`, `execute(action)`, `disconnect()`, `describeActions() → ActionDoc[]`.
   - Sensors compose a `RawPercept`: `self` (pos/vitals/inventory/motion), `terrain` (biome/time/weather), `scene` (16×16 surface heightmap + clustered objects), `nearby_entities`, `new_events`.
-- **Working Memory** (`src/brain/workspace.ts`) — persistent across ticks AND restarts (JSON at `server/data/atticus-wm.json`). Holds `identity`, `self`, `intention`, and a unified `event_log` (thoughts, actions, damage, percept-changes, chat). Focus is **not** stored — it's transient per tick.
+- **Working Memory** (`src/brain/workspace.ts`) — persistent across ticks AND restarts (JSON at `server/data/<agent>-wm.json`). Holds `identity`, `self`, `intention`, and a unified `event_log` (thoughts, actions, damage, percept-changes, chat). Focus is **not** stored — it's transient per tick.
 - **Thalamus / Attention** (`src/brain/attention.ts`) — the funnel. Reads the full percept + WM slice + the action menu, and emits a tiny `ThalamusOutput`: `focus_refs` (pointers into the percept/events/self), `actions_in_play` (which verbs are relevant), and an optional `brief`. Uses the fast model.
 - **Hydration** (`src/brain/schedule.ts`) — resolves each `focus_ref` back to its full structured data before the PFC sees it, and filters the action menu by `actions_in_play` (baseline `move`/`chat`/`wait` always kept). This keeps the PFC's input small and unparaphrased.
 - **PFC / Executive** (`src/brain/executive.ts`) — deliberates on the hydrated focus + self + intention + recent events + filtered action menu → one `thought` + `intention` + `action`. Uses the deliberate model.
@@ -105,16 +105,18 @@ Biologically, the missing piece is the **limbic system / drives** — the source
 - Long-term / episodic memory (Hippocampus).
 - Parallel modules (a reflexive Brainstem watching vitals; a default-mode "mind-wandering" when idle).
 - Skill library (learned action patterns).
-- Multi-agent (Brian, Charlie).
+- Multi-agent on one server (Atticus + Brutus). See `src/agents/`.
 - Generic prompt templating across environments.
 
 ---
 
 ## Operating notes
 
-- **Run:** `pnpm server:up && pnpm dev`. World-gen changes need `pnpm server:reset` (not just `up`).
+- **Run:** `pnpm server:up && pnpm dev` (defaults to Atticus only).
+- **Choose agents:** CLI args or `AGENTS` env — `pnpm dev -- atticus brutus`, `AGENTS=brutus pnpm dev`, or shortcuts `pnpm dev:atticus`, `pnpm dev:brutus`, `pnpm dev:both`.
+- **Agent layout:** each letter owns `src/agents/<name>/` — `identity.ts`, `body/`, and `data/` (WM + drive state). Shared brain in `src/brain/`. Agents never merge backward.
 - **World:** superflat plains with trees, no villages (`server/docker-compose.yml`). Survival mode, `easy` difficulty, `SPAWN_MONSTERS=false` (hunger drains, no hostiles distracting perception/motivation work).
-- **Reset his mind:** `rm server/data/atticus-wm.json` (or `pnpm server:reset` wipes world + mind together).
-- **Watch him:** `http://localhost:3000` (3rd person), `http://localhost:3001` (1st person).
-- **Cost/latency:** printed every 10 ticks and on Ctrl+C (total time, total cost, per-stage averages).
-- **Models:** Thalamus = `gemini-2.5-flash-lite` (fast filtering), PFC = `gemini-2.5-flash` (deliberation). Latency is set by model choice, not throttling.
+- **Reset a mind:** `rm src/agents/<name>/data/wm.json`. `pnpm server:reset` only wipes the Minecraft world.
+- **Watch them:** viewer ports are per-agent — Atticus `:3000`/`:3001`, Brutus `:3010`/`:3011`.
+- **Cost/latency:** per-agent summary printed every 10 ticks and on Ctrl+C.
+- **Models:** Thalamus = `gemini-2.5-flash-lite` (fast filtering), PFC = `gemini-2.5-flash` (deliberation). One Gemini key shared; metrics isolated per agent.

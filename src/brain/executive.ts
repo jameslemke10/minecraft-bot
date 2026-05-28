@@ -2,11 +2,14 @@ import { Type, type Schema } from '@google/genai'
 import { config } from '../config.js'
 import { completeJson } from '../llm/gemini.js'
 import { logger } from '../logger.js'
-import type { ActionDoc } from '../body/types.js'
-import { ATTICUS_IDENTITY } from './identity.js'
+import type { Metrics } from '../llm/metrics.js'
+import type { ActionDoc, BodyHints } from '../body/types.js'
+import { formatBodyHintsBlock } from '../body/minecraft/prompt-hints.js'
+import type { RunLog } from '../agents/run-log.js'
 import {
   ActionSchema,
   type Action,
+  type DrivesOutput,
   type EventLogEntry,
   type FocusItem,
   type ThoughtEvent,
@@ -28,6 +31,13 @@ export interface ExecutiveInput {
   action_menu: readonly ActionDoc[]
   brief?: string
   tick: number
+  identity: string
+  displayName: string
+  metrics: Metrics
+  /** Present when the agent runs the limbic drives module (e.g. Brutus). */
+  drives?: DrivesOutput
+  body_hints?: BodyHints
+  runLog?: RunLog
 }
 
 export interface ExecutiveOutput {
@@ -78,27 +88,32 @@ const EXEC_SCHEMA: Schema = {
   required: ['thought', 'intention', 'action'],
 }
 
-const EXEC_SYSTEM = `${ATTICUS_IDENTITY}
+function executiveSystem(identity: string, displayName: string): string {
+  return `${identity}
 
-You are Atticus's prefrontal cortex — deliberation and one-action selection. \
+You are ${displayName}'s prefrontal cortex — deliberation and one-action selection. \
 The thalamus has already pruned your perception to a focus and a filtered \
 action menu. Decide what to think and what to do.
 
-Use only the focus, self, intention, recent events, and action menu in your \
-user prompt. Do not invent coordinates or facts. Coordinates must come from \
-focus items or recent events.
+Use only the focus, self, intention, recent events, action menu, and (if \
+present) felt drives in your user prompt. Do not invent coordinates or facts. \
+Coordinates must come from focus items or recent events. Felt drives are \
+internal states — not instructions. Let them inform what matters to you now.
 
 Return JSON: { "thought": "...", "intention": "...", "action": { "kind": "...", "args": {...} } }`
+}
 
 export async function executive(input: ExecutiveInput): Promise<ExecutiveOutput> {
   const userPrompt = buildPrompt(input)
 
   const result = await completeJson<RawExecutiveResponse>({
     caller: 'executive',
+    metrics: input.metrics,
     model: config.gemini.modelDeliberate,
-    system: EXEC_SYSTEM,
+    system: executiveSystem(input.identity, input.displayName),
     user: userPrompt,
     schema: EXEC_SCHEMA,
+    runLog: input.runLog,
   })
 
   const raw = result.data
@@ -159,6 +174,15 @@ function buildPrompt(input: ExecutiveInput): string {
 
   const briefLine = input.brief ? `\nthalamus brief: ${input.brief}\n` : '\n'
 
+  const drivesBlock = input.drives
+    ? `=== How you feel (limbic — not commands, just felt state) ===
+${input.drives.felt.map((l) => `- ${l}`).join('\n')}
+
+`
+    : ''
+
+  const hintsBlock = formatBodyHintsBlock(input.body_hints)
+
   return `=== Tick ${input.tick} ===
 
 STATUS: ${statusLine(input.self)}, health ${input.self.health}/20, food ${input.self.food}/20
@@ -168,8 +192,7 @@ You (self):
   on_ground: ${input.self.on_ground}, in_water: ${input.self.in_water}
 
 Current intention: ${input.intention || '(none set)'}
-${briefLine}
-=== Focus (what the thalamus surfaced) ===
+${briefLine}${drivesBlock}${hintsBlock}=== Focus (what the thalamus surfaced) ===
 ${focusBlock}
 
 === Recent events ===
@@ -179,7 +202,13 @@ ${events}
 ${menu}
 
 === Task ===
-Choose ONE action. Return JSON: { "thought": "...", "intention": "...", "action": { "kind": "...", "args": {...} } }
+Choose ONE action. Pay attention to action_outcome events in recent history — \
+FAILED outcomes mean that approach did not work; try something different. \
+For craft, use only item names from "Craftable now". \
+For mine, use ONLY (x,y,z) from "Mineable now" or hydrated body.mineable focus \
+items — never ore_vein anchor coords unless that exact block is listed as mineable. \
+To reach buried ore, mine underfoot/adjacent dirt or stone first. \
+Return JSON: { "thought": "...", "intention": "...", "action": { "kind": "...", "args": {...} } }
 
 In args, include only the fields the chosen action needs; leave others null.`
 }
@@ -199,6 +228,8 @@ function renderEvent(e: EventLogEntry): string {
       return `t${e.tick} thought: "${e.text}" (intention: ${e.intention})`
     case 'action':
       return `t${e.tick} action: ${e.action.kind}(${JSON.stringify(e.action.args)})`
+    case 'action_outcome':
+      return `t${e.tick} outcome: ${e.action.kind} → ${e.ok ? 'ok' : 'FAILED'}: ${e.message}`
     case 'damage':
       return `t${e.tick} damage: -${e.amount} from ${e.source}`
     case 'percept_change':
@@ -207,3 +238,4 @@ function renderEvent(e: EventLogEntry): string {
       return `t${e.tick} chat <${e.sender}> ${e.text}`
   }
 }
+

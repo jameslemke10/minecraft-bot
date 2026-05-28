@@ -6,6 +6,7 @@
  * Action type from brain/types.ts.
  */
 
+import type { ActionResult } from './action-result.js'
 import type { EventLogEntry } from '../brain/types.js'
 
 export interface Vec3 {
@@ -117,6 +118,35 @@ export interface ActionDoc {
   always?: boolean
 }
 
+/** One craft option resolved from live recipes + inventory (not LLM knowledge). */
+export interface CraftOption {
+  item: string
+  ingredients: string
+  needs_table: boolean
+}
+
+/** Context passed when computing live body affordances. */
+export interface BodyHintsContext {
+  intention?: string
+}
+
+/** One block breakable from the bot's current position. */
+export interface MineOption {
+  id: string
+  x: number
+  y: number
+  z: number
+  block: string
+  relation: string
+}
+
+/** Dynamic hints the body computes each tick — recipes, reachability, etc. */
+export interface BodyHints {
+  craftable: readonly CraftOption[]
+  crafting_table_nearby: boolean
+  mineable: readonly MineOption[]
+}
+
 /**
  * The contract every environment must implement.
  *
@@ -124,11 +154,13 @@ export interface ActionDoc {
  * execute() dispatches a typed action into the environment.
  * disconnect() releases env resources cleanly.
  * describeActions() declares the verbs this body supports.
+ * describeBodyHints() optional — live recipe/craft info for the brain.
  */
 export interface Body<TAction = unknown> {
   envName: string
   sense(): Promise<RawPercept>
-  execute(action: TAction): Promise<void>
+  execute(action: TAction): Promise<ActionResult>
   disconnect(): void
   describeActions(): readonly ActionDoc[]
+  describeBodyHints?(ctx?: BodyHintsContext): Promise<BodyHints>
 }

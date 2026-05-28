@@ -1,6 +1,7 @@
 import type { Bot } from 'mineflayer'
 import { Vec3 as MFVec3 } from 'vec3'
-import type { CompassDir, NearbyEntity, ScenePercept, SceneObject, Vec3 } from '../../types.js'
+import type { CompassDir, NearbyEntity, ScenePercept, SceneObject, Vec3 } from '../../../../../body/types.js'
+import { clusterReachabilityMeta } from '../../../../../body/minecraft/reachability.js'
 
 /**
  * Scene sensor — turns raw voxel data into a perceptual scene the LLM can
@@ -205,6 +206,12 @@ function clusterTrees(
       return acc
     }, null) ?? { x: pos.x, y: pos.y, z: pos.z }
     const bbox = bboxOf(cluster)
+    const reach = clusterReachabilityMeta(
+      bot,
+      logs.length > 0 ? logs : cluster,
+      trunkBase,
+      cy
+    )
     out.push({
       id: `oak_tree:${++treeIdx}`,
       kind: 'oak_tree',
@@ -217,6 +224,7 @@ function clusterTrees(
         has_leaves: cluster.some(
           (p) => bot.blockAt(new MFVec3(p.x, p.y, p.z))?.name.endsWith('_leaves')
         ),
+        ...reach,
       },
     })
   }
@@ -277,6 +285,7 @@ function clusterOres(
     const cluster = floodFill(bot, pos, (b) => b.name === oreName, visited)
     if (cluster.length === 0) continue
     const center = centerOf(cluster)
+    const reach = clusterReachabilityMeta(bot, cluster, center, cy)
     out.push({
       id: `ore:${oreName}:${++idx}`,
       kind: 'ore_vein',
@@ -284,7 +293,7 @@ function clusterOres(
       bbox: bboxOf(cluster),
       distance: distance(center, { x: cx, y: cy, z: cz }),
       dir: compassFromDelta(center.x - cx, center.z - cz),
-      meta: { ore: oreName, count: cluster.length },
+      meta: { ore: oreName, count: cluster.length, ...reach },
     })
   }
 }

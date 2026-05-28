@@ -41,7 +41,7 @@ Three layers, two boundaries. The brain doesn't know it's in Minecraft.
               [Minecraft | …]
 ```
 
-- **Body** (`src/body/minecraft/`) is the only thing that knows mineflayer exists. Implements `Body<TAction>` from [src/body/types.ts](src/body/types.ts), including `describeActions()` so the brain's prompts can be rendered from env-declared verbs.
+- **Body** (`src/agents/<name>/body/minecraft/`) — each agent owns its body fork. Implements `Body<TAction>` from [src/body/types.ts](src/body/types.ts), including `describeActions()` so the brain's prompts can be rendered from env-declared verbs.
 - **Working Memory** (`src/brain/workspace.ts`) is the persistent slice: identity, self, intention, and a unified `event_log` of thoughts, actions, damage, percept changes, and chat. Focus is **not** stored — it's transient per tick.
 - **Thalamus** (`src/brain/attention.ts`) reads the full percept + WM slice + the names of available actions and emits a tiny `ThalamusOutput`: `focus_refs[]` (pointers into percept/events/self), `actions_in_play[]` (action names that matter right now), and an optional `brief`.
 - **Schedule** (`src/brain/schedule.ts`) hydrates each ref into a `FocusItem` with the original structured data, filters the action menu by `actions_in_play`, and hands the result to the PFC. This is what keeps the PFC's input lean and unparaphrased.
@@ -79,31 +79,44 @@ Stop server with `pnpm server:down`. Re-roll world with `pnpm server:reset`.
 
 ```
 src/
+├── agents/                      # one folder per agent (alphabet line)
+│   ├── types.ts                 # AgentDefinition contract
+│   ├── identity.ts              # shared existential framing template
+│   ├── registry.ts              # atticus, brutus, … + spawn resolution
+│   ├── run-agent.ts             # boot + run one agent
+│   ├── atticus/
+│   │   ├── index.ts             # username, WM path, viewer ports
+│   │   └── body/minecraft/      # frozen baseline body
+│   └── brutus/
+│       ├── index.ts
+│       └── body/minecraft/      # fork for experiments (drives, FOV, …)
 ├── body/
-│   ├── types.ts                 # Body interface, RawPercept (env-agnostic)
-│   └── minecraft/               # env-specific impl
-│       ├── index.ts             # createMinecraftBody()
-│       ├── world-state.ts       # event ring buffer
-│       ├── perception.ts        # mineflayer events → event buffer
-│       ├── execute.ts           # Action → mineflayer call (zod-validated)
-│       └── sensors/             # build RawPercept from the live bot
-│           ├── self.ts          # position, vitals, inventory
-│           ├── terrain.ts       # biome, time, weather, blocks
-│           ├── entities.ts      # nearby mobs/players/items
-│           └── index.ts         # composes into RawPercept
-├── brain/                       # env-agnostic
-│   ├── types.ts                 # Action, WorkingMemory, SalientItem, Thought
-│   ├── identity.ts              # ATTICUS_IDENTITY constant
-│   ├── workspace.ts             # WorkingMemory + sliceFor* helpers
-│   ├── attention.ts             # Attention (Thalamus) module
-│   ├── executive.ts             # Executive (PFC) module
-│   └── schedule.ts              # the conscious loop
+│   └── types.ts                 # Body interface, RawPercept (env-agnostic)
+├── brain/                       # shared cognitive modules
+│   ├── workspace.ts
+│   ├── attention.ts             # Thalamus
+│   ├── executive.ts             # PFC
+│   └── schedule.ts              # conscious loop
 ├── llm/
-│   └── gemini.ts                # @google/genai wrapper, per-call model + JSON mode
-├── config.ts                    # env vars (typed via zod)
+│   ├── gemini.ts
+│   └── metrics.ts               # createMetrics(agentId) — one per agent
+├── config.ts
 ├── logger.ts
-└── main.ts                      # entrypoint
+└── main.ts                      # spawns selected agents
 ```
+
+## Spawning agents
+
+Default is Atticus only. Pick agents via CLI or `AGENTS` env:
+
+```sh
+pnpm dev                        # atticus
+pnpm dev -- atticus brutus      # both in same world
+AGENTS=brutus pnpm dev          # brutus only
+pnpm dev:both                   # shortcut
+```
+
+Each agent gets its own MC username, WM file (`server/data/<agent>-wm.json`), viewer ports, and cost summary. One Gemini key; metrics never shared.
 
 ## Per-tick cost budget
 
@@ -121,12 +134,23 @@ At 2–3 ticks/min (action-driven): **~$0.10/hour**.
 
 | Command | What it does |
 |---|---|
-| `pnpm dev` | Run with hot reload |
-| `pnpm start` | Run once |
+| `pnpm dev` | Atticus only (default) |
+| `pnpm dev:atticus` | Atticus only |
+| `pnpm dev:brutus` | Brutus only |
+| `pnpm dev:both` | Atticus + Brutus in same world |
+| `pnpm start` | Run once (respects `AGENTS` / CLI args) |
 | `pnpm typecheck` | `tsc --noEmit` |
 | `pnpm test` | Run vitest |
 | `pnpm server:up` / `:down` / `:logs` | Manage local MC server |
 | `pnpm server:reset` | Wipe world + restart server |
+
+## Adding a new agent (Charlie, …)
+
+1. Copy `src/agents/brutus/` → `src/agents/charlie/`.
+2. Update `index.ts`: id, displayName, mcUsername, wmPath, viewer ports.
+3. Register in `src/agents/registry.ts`.
+4. Add username to `OPS` in `server/docker-compose.yml`.
+5. Never merge changes backward into earlier agents.
 
 ## Adding a new brain module
 

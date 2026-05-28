@@ -6,3 +6,7 @@ dist/
 
 # Minecraft server runtime data (created by docker volume)
 server/data/
+
+# Per-agent persistent minds (WM, drive state, run logs)
+src/agents/*/data/*
+!src/agents/*/data/.gitkeep

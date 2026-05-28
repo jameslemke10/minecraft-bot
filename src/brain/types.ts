@@ -131,9 +131,19 @@ export interface ChatEvent {
   text: string
 }
 
+/** Body feedback after execute() — lets the PFC see failures, not just logs. */
+export interface ActionOutcomeEvent {
+  kind: 'action_outcome'
+  tick: number
+  action: Action
+  ok: boolean
+  message: string
+}
+
 export type EventLogEntry =
   | ThoughtEvent
   | ActionEvent
+  | ActionOutcomeEvent
   | DamageEvent
   | PerceptChangeEvent
   | ChatEvent
@@ -148,9 +158,10 @@ export type EventLogEntry =
  * - source 'entities'      → id matches Entity.id (number)
  * - source 'events'        → tick + kind (matches latest event of that kind at that tick)
  * - source 'self'          → id is a self field name ('health', 'food', 'position', 'inventory')
+ * - source 'body.mineable' → id matches MineOption.id from body hints (e.g. 'mineable:0')
  */
 export interface FocusRef {
-  source: 'scene.objects' | 'entities' | 'events' | 'self'
+  source: 'scene.objects' | 'entities' | 'events' | 'self' | 'body.mineable'
   id?: string | number
   tick?: number
   kind?: EventLogEntry['kind']
@@ -169,6 +180,31 @@ export interface ThalamusOutput {
   focus_refs: FocusRef[]
   actions_in_play: string[]   // action names; empty = all actions
   brief?: string
+}
+
+/** Persisted limbic state — WM field for agents with drives enabled. */
+export interface DriveState {
+  focus_streak: { key: string; count: number } | null
+  habituation: Record<string, number>
+  last_action: { kind: string; tick: number } | null
+  last_position: { x: number; y: number; z: number } | null
+  intention_streak: number
+  last_intention: string
+  wait_streak: number
+}
+
+export interface DriveSignals {
+  hunger: number
+  boredom: number
+  futility: number
+  curiosity: number
+  discomfort: number
+}
+
+export interface DrivesOutput {
+  signals: DriveSignals
+  felt: string[]
+  state: DriveState
 }
 
 // --- Working Memory (persistent) ---
@@ -191,6 +227,8 @@ export interface WorkingMemory {
   event_log: EventLogEntry[]   // ring buffer, max 50
   tick: number
   timestamp: number
+  /** Limbic persistence — only used by agents with drives enabled. */
+  drive_state?: DriveState
 }
 
 // --- Brain function type ---

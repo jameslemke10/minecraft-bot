@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
+    "dev:atticus": "tsx watch src/main.ts -- atticus",
+    "dev:brutus": "tsx watch src/main.ts -- brutus",
+    "dev:both": "tsx watch src/main.ts -- atticus brutus",
     "start": "tsx src/main.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit",

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { WorldState } from '../src/body/minecraft/world-state.js'
+import { WorldState } from '../src/agents/atticus/body/minecraft/world-state.js'
 
 describe('WorldState', () => {
   it('drains pushed events with the supplied tick', () => {

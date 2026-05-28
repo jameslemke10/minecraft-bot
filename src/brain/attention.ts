@@ -1,9 +1,11 @@
 import { Type, type Schema } from '@google/genai'
 import { config } from '../config.js'
 import { completeJson } from '../llm/gemini.js'
-import type { ActionDoc, RawPercept } from '../body/types.js'
+import type { Metrics } from '../llm/metrics.js'
+import type { ActionDoc, BodyHints, RawPercept } from '../body/types.js'
+import { formatBodyHintsBlock } from '../body/minecraft/prompt-hints.js'
 import type { EventLogEntry, ThalamusOutput } from './types.js'
-import { ATTICUS_IDENTITY } from './identity.js'
+import type { RunLog } from '../agents/run-log.js'
 
 /**
  * Thalamus — the funnel between raw perception and the PFC.
@@ -22,6 +24,11 @@ export interface AttentionInput {
   intention: string
   recent_events: readonly EventLogEntry[]
   action_menu: readonly ActionDoc[]
+  identity: string
+  displayName: string
+  metrics: Metrics
+  body_hints?: BodyHints
+  runLog?: RunLog
 }
 
 export type AttentionOutput = ThalamusOutput
@@ -36,7 +43,7 @@ const THALAMUS_SCHEMA: Schema = {
         properties: {
           source: {
             type: Type.STRING,
-            enum: ['scene.objects', 'entities', 'events', 'self'],
+            enum: ['scene.objects', 'entities', 'events', 'self', 'body.mineable'],
           },
           id: { type: Type.STRING, nullable: true },
           tick: { type: Type.NUMBER, nullable: true },
@@ -55,9 +62,10 @@ const THALAMUS_SCHEMA: Schema = {
   required: ['focus_refs', 'actions_in_play'],
 }
 
-const ATTENTION_SYSTEM = `${ATTICUS_IDENTITY}
+function thalamusSystem(identity: string, displayName: string): string {
+  return `${identity}
 
-You are Atticus's thalamus — the attentional filter between raw perception \
+You are ${displayName}'s thalamus — the attentional filter between raw perception \
 and conscious deliberation. Each tick you read the percept and decide what \
 the prefrontal cortex should think about, and which actions are relevant.
 
@@ -66,16 +74,19 @@ into the original data, plus a list of action names that matter right now, \
 plus an optional one-sentence brief.
 
 Return JSON: { "focus_refs": [...], "actions_in_play": [...], "brief": "..." }`
+}
 
 export async function attention(input: AttentionInput): Promise<AttentionOutput> {
   const userPrompt = buildPrompt(input)
 
   const result = await completeJson<ThalamusOutput>({
     caller: 'attention',
+    metrics: input.metrics,
     model: config.gemini.modelFast,
-    system: ATTENTION_SYSTEM,
+    system: thalamusSystem(input.identity, input.displayName),
     user: userPrompt,
     schema: THALAMUS_SCHEMA,
+    runLog: input.runLog,
   })
 
   // Normalize: ids come back as strings even when they should be numbers
@@ -110,7 +121,7 @@ function buildPrompt(input: AttentionInput): string {
             const bbox = o.bbox
               ? ` bbox[(${o.bbox[0].x},${o.bbox[0].y},${o.bbox[0].z})..(${o.bbox[1].x},${o.bbox[1].y},${o.bbox[1].z})]`
               : ''
-            return `- id=${JSON.stringify(o.id)} kind=${o.kind} anchor=(${o.anchor.x},${o.anchor.y},${o.anchor.z}) dist=${o.distance.toFixed(1)}m dir=${o.dir}${bbox}${meta}`
+            return `- id=${JSON.stringify(o.id)} kind=${o.kind} anchor=(${o.anchor.x},${o.anchor.y},${o.anchor.z}) dist=${o.distance.toFixed(1)}m dir=${o.dir}${bbox}${meta}${reachNote(o.meta)}`
           })
           .join('\n')
 
@@ -161,6 +172,8 @@ ${recent}
 === Working memory ===
 intention: ${input.intention || '(none set)'}
 
+${formatBodyHintsBlock(input.body_hints)}
+
 === Available actions (decide which are relevant → actions_in_play) ===
 ${input.action_menu.map((a) => `- ${a.signature}: ${a.description}`).join('\n')}
 
@@ -169,17 +182,21 @@ Decide what should be in the PFC's focus this tick.
 
 Rules:
 - focus_refs: short list (2-5 typical; hard ceiling 15) of pointers into the \
-data above. Each ref has: source ∈ {scene.objects, entities, events, self}, \
-an id (object id, entity id as a string of digits, or self field name like \
-"health"/"food"/"position"/"inventory"), an optional tick+kind for events, \
+data above. Each ref has: source ∈ {scene.objects, entities, events, self, \
+body.mineable}, an id (object id, entity id as a string of digits, self field \
+name, or mineable id like "mineable:0"), an optional tick+kind for events, \
 and a "why" fragment under 10 words.
 - actions_in_play: read the action list above and include every action that \
 could operate on something you put in focus. Match the verb to the target: \
-\n    • a tree, log, ore, or any block worth gathering in focus → include "mine" \
+\n    • to break blocks → include "mine" ONLY if Mineable now is non-empty; \
+focus refs for mining must use source='body.mineable' with ids from that list \
+\n    • ore_vein / tree scene objects with exposed=false are context only \
+(buried or out of reach) — do NOT use their anchor coords for mine; dig \
+Mineable now blocks (dirt/stone underfoot) to reach buried resources \
 \n    • a hostile mob or a huntable animal in focus → include "attack" \
 \n    • food in your inventory (and you're hungry) → include "eat" \
 \n    • you have materials and want to build or make something → include \
-"craft", "place", "equip" \
+"craft", "place", "equip" (check "Craftable now" for exact item names) \
 \n    • it's night and you want rest → include "sleep" \
 The basics — move, chat, wait — are ALWAYS available to the PFC, so you do \
 NOT need to list them. This list ADDS the situation-specific verbs; it never \
@@ -205,12 +222,21 @@ function motionVerb(m: import('../body/types.js').Motion): string {
   }
 }
 
+function reachNote(meta: Record<string, unknown> | undefined): string {
+  if (!meta || typeof meta.exposed !== 'boolean') return ''
+  const depth =
+    typeof meta.depth_below_feet === 'number' ? ` depth_below_feet=${meta.depth_below_feet}` : ''
+  return ` exposed=${meta.exposed}${depth}`
+}
+
 function renderEvent(e: EventLogEntry): string {
   switch (e.kind) {
     case 'thought':
       return `- t${e.tick} thought: "${e.text}" (intention: ${e.intention})`
     case 'action':
       return `- t${e.tick} action: ${e.action.kind}(${JSON.stringify(e.action.args)})`
+    case 'action_outcome':
+      return `- t${e.tick} outcome: ${e.action.kind} → ${e.ok ? 'ok' : 'FAILED'}: ${e.message}`
     case 'damage':
       return `- t${e.tick} damage: ${e.amount} from ${e.source}`
     case 'percept_change':
@@ -219,3 +245,4 @@ function renderEvent(e: EventLogEntry): string {
       return `- t${e.tick} chat <${e.sender}> ${e.text}`
   }
 }
+

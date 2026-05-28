@@ -1,5 +1,5 @@
 import type { Bot } from 'mineflayer'
-import type { NearbyEntity } from '../../types.js'
+import type { NearbyEntity } from '../../../../../body/types.js'
 
 const RADIUS = 16
 const MAX_ENTITIES = 16

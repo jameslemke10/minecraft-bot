@@ -1,5 +1,5 @@
 import type { Bot } from 'mineflayer'
-import type { TerrainPercept, TimeOfDay, Weather } from '../../types.js'
+import type { TerrainPercept, TimeOfDay, Weather } from '../../../../../body/types.js'
 
 export function senseTerrain(bot: Bot): TerrainPercept {
   return {

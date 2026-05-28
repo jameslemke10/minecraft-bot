@@ -1,6 +1,8 @@
 /**
  * Per-run accounting for Gemini calls: token counts, latency, and cost.
  *
+ * Each agent gets its own Metrics instance — never shared across agents.
+ *
  * Pricing is per 1M tokens, paid-tier, as published by Google for the
  * Gemini 2.5 family (input / output):
  *   - gemini-2.5-flash-lite : $0.10 / $0.40
@@ -30,6 +32,7 @@ interface StageStats {
 }
 
 export interface MetricsSummary {
+  agentId: string
   runDurationSec: number
   totalCostUsd: number
   totalCalls: number
@@ -46,10 +49,20 @@ export interface MetricsSummary {
   >
 }
 
-class Metrics {
+export interface DriveAggregate {
+  samples: number
+  max: import('../brain/types.js').DriveSignals
+  avg: import('../brain/types.js').DriveSignals
+  peakFelt: string[]
+}
+
+export class Metrics {
   private startedAt = Date.now()
   private byStage = new Map<string, StageStats>()
   private unknownModelsWarned = new Set<string>()
+  private printed = false
+
+  constructor(readonly agentId: string) {}
 
   record(
     caller: string,
@@ -61,9 +74,10 @@ class Metrics {
     const price = PRICING[model]
     if (!price && !this.unknownModelsWarned.has(model)) {
       this.unknownModelsWarned.add(model)
-      // Avoid importing logger (circular-ish); cost just counts as 0.
       // eslint-disable-next-line no-console
-      console.warn(`[metrics] no pricing for model "${model}" — counting cost as $0`)
+      console.warn(
+        `[metrics:${this.agentId}] no pricing for model "${model}" — counting cost as $0`
+      )
     }
     const cost = price
       ? (inputTokens / 1e6) * price.inPerM + (outputTokens / 1e6) * price.outPerM
@@ -86,27 +100,23 @@ class Metrics {
     this.byStage.set(caller, s)
   }
 
-  private printed = false
+  markPrinted(): void {
+    this.printed = true
+  }
 
-  /**
-   * Print the summary synchronously to stderr, exactly once. Safe to call
-   * from multiple signal/exit handlers — only the first call prints. Uses a
-   * synchronous stderr write so it survives a force-kill (e.g. `tsx watch`).
-   */
   printSummaryOnce(): void {
     if (this.printed) return
     this.printed = true
     process.stderr.write('\n' + this.formatSummaryText() + '\n')
   }
 
-  /** Human-readable multi-line summary for synchronous console output. */
   formatSummaryText(): string {
     const s = this.summary()
     const mins = Math.floor(s.runDurationSec / 60)
     const secs = s.runDurationSec % 60
     const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`
     const lines: string[] = []
-    lines.push('========== RUN SUMMARY ==========')
+    lines.push(`========== RUN SUMMARY (${s.agentId}) ==========`)
     lines.push(`total time:  ${timeStr} (${s.runDurationSec}s)`)
     lines.push(`total cost:  $${s.totalCostUsd.toFixed(5)}`)
     lines.push(`total calls: ${s.totalCalls}`)
@@ -117,7 +127,7 @@ class Metrics {
           `in ${st.inputTokens} / out ${st.outputTokens} tok | $${st.costUsd.toFixed(5)}`
       )
     }
-    lines.push('=================================')
+    lines.push('===============================================')
     return lines.join('\n')
   }
 
@@ -138,6 +148,7 @@ class Metrics {
       totalCalls += s.calls
     }
     return {
+      agentId: this.agentId,
       runDurationSec: Math.round((Date.now() - this.startedAt) / 1000),
       totalCostUsd: round5(totalCostUsd),
       totalCalls,
@@ -146,8 +157,10 @@ class Metrics {
   }
 }
 
+export function createMetrics(agentId: string): Metrics {
+  return new Metrics(agentId)
+}
+
 function round5(n: number): number {
   return Math.round(n * 1e5) / 1e5
 }
-
-export const metrics = new Metrics()

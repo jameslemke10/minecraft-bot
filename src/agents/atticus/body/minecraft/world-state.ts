@@ -1,5 +1,5 @@
-import type { EventLogEntry } from '../../brain/types.js'
-import type { Motion, Vec3 } from '../types.js'
+import type { EventLogEntry } from '../../../../brain/types.js'
+import type { Motion, Vec3 } from '../../../../body/types.js'
 
 /**
  * Buffers events the mineflayer bot emits between sense() calls. Sensors
