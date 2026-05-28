@@ -7,9 +7,12 @@ import type {
   ThalamusOutput,
 } from './types.js'
 import { logger } from '../logger.js'
+import { metrics } from '../llm/metrics.js'
 import { Workspace, selfFromPercept } from './workspace.js'
 import { attention } from './attention.js'
 import { executive } from './executive.js'
+
+const METRICS_EVERY_TICKS = 10
 
 export interface BrainLoopOptions {
   /** Stop after N ticks. Omit for unbounded. */
@@ -55,7 +58,7 @@ export async function runBrain(
         percept,
         intention: slice.intention,
         recent_events: slice.recent_events,
-        action_names: actionMenu.map((a) => a.name),
+        action_menu: actionMenu,
       })
       logger.info(
         {
@@ -97,6 +100,10 @@ export async function runBrain(
       }
     } catch (err) {
       logger.error({ err: String(err), tick }, 'brain tick failed — skipping')
+    }
+
+    if ((tick - startTick + 1) % METRICS_EVERY_TICKS === 0) {
+      logger.info(metrics.summary(), 'run metrics (running total)')
     }
 
     tick++
@@ -190,10 +197,11 @@ export function filterActionMenu(
   inPlay: readonly string[]
 ): readonly ActionDoc[] {
   if (inPlay.length === 0) return full
-  const set = new Set(inPlay)
-  const filtered = full.filter((a) => set.has(a.name))
-  // Safety: if the thalamus filtered too aggressively (e.g. empty result),
-  // fall back to the full menu so the PFC isn't stranded.
+  // `always` actions are the PFC's baseline agency and are kept no matter
+  // what; the thalamus's list only *adds* context-specific actions on top.
+  // This guarantees the menu can never collapse to a single option.
+  const highlighted = new Set(inPlay)
+  const filtered = full.filter((a) => a.always || highlighted.has(a.name))
   return filtered.length === 0 ? full : filtered
 }
 

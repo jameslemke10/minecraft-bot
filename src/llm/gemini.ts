@@ -1,6 +1,7 @@
 import { GoogleGenAI, type Schema } from '@google/genai'
 import { config } from '../config.js'
 import { logger } from '../logger.js'
+import { metrics } from './metrics.js'
 
 const MAX_RETRIES = 3
 const INITIAL_BACKOFF_MS = 500
@@ -115,6 +116,14 @@ async function callGemini(opts: CallOpts): Promise<CompleteResult> {
         latencyMs: Date.now() - start,
         model: opts.model,
       }
+
+      metrics.record(
+        opts.caller,
+        opts.model,
+        result.inputTokens,
+        result.outputTokens,
+        result.latencyMs
+      )
 
       logger.info(
         {

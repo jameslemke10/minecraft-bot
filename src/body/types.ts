@@ -108,6 +108,13 @@ export interface ActionDoc {
   name: string
   signature: string          // e.g. "mine(x, y, z)"
   description: string        // one or two sentences
+  /**
+   * Always offered to the PFC regardless of the thalamus's action filter.
+   * These are the "you can always do this" verbs (move/chat/wait) — the
+   * filter highlights *additional* context-specific actions, it never
+   * removes the baseline, so the PFC can never be trapped into one option.
+   */
+  always?: boolean
 }
 
 /**

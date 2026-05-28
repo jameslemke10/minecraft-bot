@@ -12,16 +12,19 @@ const MINECRAFT_ACTIONS: readonly ActionDoc[] = [
     signature: 'move(x, z)',
     description:
       'Pathfind on the surface to absolute world coordinates. Y is automatic. Use to travel.',
+    always: true,
   },
   {
     name: 'chat',
     signature: 'chat(msg)',
     description: 'Say something out loud. Other players hear it.',
+    always: true,
   },
   {
     name: 'wait',
     signature: 'wait(ms)',
     description: 'Pause for ms milliseconds (max 60000). Useful to slow down or observe.',
+    always: true,
   },
   {
     name: 'mine',
@@ -104,6 +107,9 @@ export async function createMinecraftBody(): Promise<Body<Action>> {
   } catch (err) {
     logger.warn({ err: String(err) }, 'waitForChunksToLoad failed — continuing')
   }
+  // Let physics settle so the brain doesn't start mid-fall and convince
+  // itself it's "falling" while the spawn drop completes.
+  await settleOnGround(bot)
 
   const movements = new Movements(bot)
   movements.canDig = false
@@ -144,6 +150,19 @@ function startViewer(bot: Bot, port: number, firstPerson: boolean): void {
   } catch (err) {
     logger.warn({ err: String(err), port }, 'viewer failed to start')
   }
+}
+
+async function settleOnGround(bot: Bot): Promise<void> {
+  const deadline = Date.now() + 6000
+  while (Date.now() < deadline) {
+    if (bot.entity?.onGround) return
+    try {
+      await bot.waitForTicks(5)
+    } catch {
+      return
+    }
+  }
+  logger.warn({ y: bot.entity?.position?.y }, 'bot did not settle on ground before timeout')
 }
 
 function waitForSpawn(bot: Bot): Promise<void> {

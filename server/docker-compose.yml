@@ -10,7 +10,12 @@ services:
       VERSION: "1.20.4"
       ONLINE_MODE: "FALSE"
       MEMORY: "2G"
-      DIFFICULTY: "peaceful"
+      # 'easy' so hunger actually depletes (peaceful auto-refills it), giving
+      # Atticus a baseline survival drive. SPAWN_MONSTERS=false suppresses
+      # hostile mobs so combat doesn't dominate while we tune motivation.
+      # Passive animals (sheep etc.) still spawn.
+      DIFFICULTY: "easy"
+      SPAWN_MONSTERS: "FALSE"
       MODE: "survival"
       # Force Atticus into survival on join even though his player file may
       # still remember creative from the previous run.
@@ -20,15 +25,19 @@ services:
       SPAWN_PROTECTION: "0"
       ALLOW_FLIGHT: "TRUE"
       MOTD: "Minecraft Bot Dev Server"
-      # World generation: single-biome forest. Normal terrain (with hills,
-      # ponds, caves below) but the whole world is one biome. Forest gives
-      # dense oak + birch trees, and villages do NOT spawn in forest biomes,
-      # so Atticus starts in undisturbed wilderness.
-      # To pick a different world, bump LEVEL (forces regen) and run
-      # `pnpm server:reset`.
-      LEVEL: "bot-world-forest"
-      LEVEL_TYPE: "minecraft:single_biome"
-      GENERATOR_SETTINGS: '{"biome":"minecraft:forest"}'
+      # World generation: SUPERFLAT plains with trees. Paper silently ignores
+      # single_biome, so we use the flat preset which is 100% deterministic:
+      # - biome plains (grass surface, animals spawn, sparse oak trees)
+      # - features:true → scattered oaks, grass, flowers
+      # - structures:{} → no villages
+      # - lakes:false → no water holes
+      # - layers lift the grass surface to y=64 (1 bedrock + 124 stone +
+      #   3 dirt + 1 grass), so spawn is flat and low — no canopy/hills.
+      # IMPORTANT: world-gen changes only apply on a full regen. After editing
+      # this, run `pnpm server:reset` (not just `server:up`).
+      LEVEL: "bot-world-flatplains"
+      LEVEL_TYPE: "minecraft:flat"
+      GENERATOR_SETTINGS: '{"biome":"minecraft:plains","features":true,"lakes":false,"structures":{},"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":124},{"block":"minecraft:dirt","height":3},{"block":"minecraft:grass_block","height":1}]}'
       # Auto-op the bot so it can teleport itself / use commands later
       OPS: "Atticus"
     tty: true

@@ -1,16 +1,17 @@
 import { Type, type Schema } from '@google/genai'
 import { config } from '../config.js'
 import { completeJson } from '../llm/gemini.js'
-import type { RawPercept } from '../body/types.js'
+import type { ActionDoc, RawPercept } from '../body/types.js'
 import type { EventLogEntry, ThalamusOutput } from './types.js'
 import { ATTICUS_IDENTITY } from './identity.js'
 
 /**
  * Thalamus — the funnel between raw perception and the PFC.
  *
- * Reads: full percept, current intention, recent events, full action menu names.
+ * Reads: full percept, current intention, recent events, the full action
+ * menu (with descriptions, so it can reason about which verbs apply).
  * Emits: focus_refs (pointers into percept/events/self), actions_in_play
- * (subset of action names that matter given the focus), optional brief.
+ * (the actions that operate on what it surfaced), optional brief.
  *
  * Output is intentionally tiny — the schedule hydrates each ref against the
  * original data before passing to the PFC, so the LLM never has to act as
@@ -20,7 +21,7 @@ export interface AttentionInput {
   percept: RawPercept
   intention: string
   recent_events: readonly EventLogEntry[]
-  action_names: readonly string[]
+  action_menu: readonly ActionDoc[]
 }
 
 export type AttentionOutput = ThalamusOutput
@@ -160,8 +161,8 @@ ${recent}
 === Working memory ===
 intention: ${input.intention || '(none set)'}
 
-=== Available actions (filter into actions_in_play) ===
-${input.action_names.join(', ')}
+=== Available actions (decide which are relevant → actions_in_play) ===
+${input.action_menu.map((a) => `- ${a.signature}: ${a.description}`).join('\n')}
 
 === Task ===
 Decide what should be in the PFC's focus this tick.
@@ -172,13 +173,25 @@ data above. Each ref has: source ∈ {scene.objects, entities, events, self}, \
 an id (object id, entity id as a string of digits, or self field name like \
 "health"/"food"/"position"/"inventory"), an optional tick+kind for events, \
 and a "why" fragment under 10 words.
-- actions_in_play: which action names matter given the focus. If under \
-threat: combat + movement. If safe and gathering: mine/craft/equip. If \
-empty list, the PFC sees all actions — pass empty when uncertain.
-- brief: optional one-sentence summation of the situation. Useful when the \
-focus list alone wouldn't communicate the gist.
+- actions_in_play: read the action list above and include every action that \
+could operate on something you put in focus. Match the verb to the target: \
+\n    • a tree, log, ore, or any block worth gathering in focus → include "mine" \
+\n    • a hostile mob or a huntable animal in focus → include "attack" \
+\n    • food in your inventory (and you're hungry) → include "eat" \
+\n    • you have materials and want to build or make something → include \
+"craft", "place", "equip" \
+\n    • it's night and you want rest → include "sleep" \
+The basics — move, chat, wait — are ALWAYS available to the PFC, so you do \
+NOT need to list them. This list ADDS the situation-specific verbs; it never \
+removes the basics. If you surface a resource but omit its verb, the PFC \
+literally cannot act on it — so don't forget the matching action.
+- brief: optional one-sentence NEUTRAL description of the situation (what is \
+around, what just changed). Describe, do not decide — never say what you \
+"will do" or instruct an action. That is the PFC's job, not yours.
 
-Be choosy. Less is better focus. Do not invent things not in the percept.
+Be choosy. Less is better focus. Do not invent things not in the percept. \
+Available self fields to ref: health, food, position, inventory, motion, \
+on_ground (NOT "intention" — that is shown separately).
 
 Return JSON: { "focus_refs": [...], "actions_in_play": [...], "brief": "..." }`
 }
