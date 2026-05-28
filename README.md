@@ -7,40 +7,47 @@ An LLM-driven agent named **Atticus** living in a Minecraft world. Minecraft is 
 Three layers, two boundaries. The brain doesn't know it's in Minecraft.
 
 ```
-┌──────────────────────────────────────────────┐
-│  BRAIN  (environment-agnostic)               │
-│                                              │
-│    Attention (Thalamus)  ┐                   │
-│         ↓ writes salient[], self             │
-│    ┌──────────────────┐  │                   │
-│    │  WORKING MEMORY  │  │                   │
-│    │  identity        │  │  selective        │
-│    │  self            │  │  slices per       │
-│    │  salient[]       │  │  module           │
-│    │  intention       │  │                   │
-│    │  recent_thoughts │  │                   │
-│    └──────────────────┘  │                   │
-│         ↓ reads slice                        │
-│    Executive (PFC) → returns Action[]        │
-└──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  BRAIN  (environment-agnostic)                             │
+│                                                            │
+│    Thalamus (Attention) ──┐                                │
+│      reads percept + WM   │ emits ThalamusOutput:          │
+│      slice + action names │   focus_refs[] (pointers)      │
+│                           │   actions_in_play[]            │
+│                           │   brief?                       │
+│                           ▼                                │
+│    Schedule hydrates refs → FocusItem[]                    │
+│                           │                                │
+│    PFC (Executive) ◄──────┘ reads hydrated focus + WM      │
+│      slice + filtered action menu → Decision               │
+│                                                            │
+│    ┌──────────────────────────────────────┐                │
+│    │  WORKING MEMORY (persistent)         │                │
+│    │  identity                            │                │
+│    │  self                                │                │
+│    │  intention                           │                │
+│    │  event_log[]  (last 50)              │                │
+│    └──────────────────────────────────────┘                │
+└────────────────────────────────────────────────────────────┘
                        ↕
-┌──────────────────────────────────────────────┐
-│  BODY  (env-specific impl of Body interface) │
-│  sense() → RawPercept                        │
-│  execute(Action) → void                      │
-└──────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  BODY  (env-specific impl of Body<TAction> interface)      │
+│  sense() → RawPercept (self, terrain, scene, entities,     │
+│                        new_events)                         │
+│  execute(Action) → void                                    │
+│  describeActions() → ActionDoc[]                           │
+└────────────────────────────────────────────────────────────┘
                        ↕
               [Minecraft | …]
 ```
 
-- **Body** (`src/body/minecraft/`) is the only thing that knows mineflayer exists. Implements the `Body` interface from [src/body/types.ts](src/body/types.ts).
-- **Working Memory** (`src/brain/workspace.ts`) is the shared workspace. Modules read/write only declared slices.
-- **Brain modules** are env-agnostic. Two so far:
-  - **Attention** ("Thalamus") — filters raw perception into 0–5 salient items. Uses the fast/cheap model.
-  - **Executive** ("PFC") — reads only the workspace slice, decides what to think and do. Uses the more deliberate model.
-- **Schedule** (`src/brain/schedule.ts`) — the conscious loop. Serial: sense → Attention → Executive → act.
+- **Body** (`src/body/minecraft/`) is the only thing that knows mineflayer exists. Implements `Body<TAction>` from [src/body/types.ts](src/body/types.ts), including `describeActions()` so the brain's prompts can be rendered from env-declared verbs.
+- **Working Memory** (`src/brain/workspace.ts`) is the persistent slice: identity, self, intention, and a unified `event_log` of thoughts, actions, damage, percept changes, and chat. Focus is **not** stored — it's transient per tick.
+- **Thalamus** (`src/brain/attention.ts`) reads the full percept + WM slice + the names of available actions and emits a tiny `ThalamusOutput`: `focus_refs[]` (pointers into percept/events/self), `actions_in_play[]` (action names that matter right now), and an optional `brief`.
+- **Schedule** (`src/brain/schedule.ts`) hydrates each ref into a `FocusItem` with the original structured data, filters the action menu by `actions_in_play`, and hands the result to the PFC. This is what keeps the PFC's input lean and unparaphrased.
+- **PFC** (`src/brain/executive.ts`) reads the hydrated focus + self + intention + recent events + filtered action menu → returns thought + intention + one action.
 
-Latency per module is set by **model choice**, not throttling. Add a new module by writing a function with the right slice contract and slotting it into `schedule.ts`.
+Latency per module is set by **model choice**, not throttling. Thalamus uses the fast model (filtering); PFC uses the more deliberate model (decision).
 
 ## Prerequisites
 

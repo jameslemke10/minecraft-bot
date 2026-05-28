@@ -2,33 +2,36 @@ import { Type, type Schema } from '@google/genai'
 import { config } from '../config.js'
 import { completeJson } from '../llm/gemini.js'
 import { logger } from '../logger.js'
+import type { ActionDoc } from '../body/types.js'
 import { ATTICUS_IDENTITY } from './identity.js'
 import {
   ActionSchema,
   type Action,
-  type SalientItem,
-  type Thought,
+  type EventLogEntry,
+  type FocusItem,
+  type ThoughtEvent,
   type WorkingMemorySelf,
 } from './types.js'
 
 /**
- * Executive — deliberation, decision, action selection.
- * Biological analogue: prefrontal cortex (PFC).
+ * PFC — deliberation and action selection.
  *
- * Reads a slice of working memory (NOT the raw percept — Attention has
- * already filtered for it) and returns a thought + intention update + an
- * action to take. Uses the more thoughtful model.
+ * Reads only what the Thalamus surfaced (hydrated focus + filtered action
+ * menu) plus the always-on slice of WM (self, intention, recent events).
+ * Never reads the raw percept directly.
  */
 export interface ExecutiveInput {
+  focus: readonly FocusItem[]
   self: WorkingMemorySelf
-  salient: readonly SalientItem[]
   intention: string
-  recent_thoughts: readonly Thought[]
+  recent_events: readonly EventLogEntry[]
+  action_menu: readonly ActionDoc[]
+  brief?: string
   tick: number
 }
 
 export interface ExecutiveOutput {
-  thought: Thought
+  thought: ThoughtEvent
   intention: string
   action: Action | null
 }
@@ -47,14 +50,25 @@ const EXEC_SCHEMA: Schema = {
     action: {
       type: Type.OBJECT,
       properties: {
-        kind: { type: Type.STRING, enum: ['move', 'chat', 'wait'] },
+        kind: {
+          type: Type.STRING,
+          enum: [
+            'move', 'chat', 'wait',
+            'mine', 'place', 'craft', 'equip', 'attack', 'eat', 'sleep',
+          ],
+        },
         args: {
           type: Type.OBJECT,
           properties: {
             x: { type: Type.NUMBER, nullable: true },
+            y: { type: Type.NUMBER, nullable: true },
             z: { type: Type.NUMBER, nullable: true },
             msg: { type: Type.STRING, nullable: true },
             ms: { type: Type.NUMBER, nullable: true },
+            block: { type: Type.STRING, nullable: true },
+            item: { type: Type.STRING, nullable: true },
+            count: { type: Type.NUMBER, nullable: true },
+            entityId: { type: Type.NUMBER, nullable: true },
           },
         },
       },
@@ -66,25 +80,15 @@ const EXEC_SCHEMA: Schema = {
 
 const EXEC_SYSTEM = `${ATTICUS_IDENTITY}
 
-Right now you are deliberating — the prefrontal cortex of your mind. You \
-have already filtered your raw perception down to a few salient items. Now \
-choose what to do.
+You are Atticus's prefrontal cortex — deliberation and one-action selection. \
+The thalamus has already pruned your perception to a focus and a filtered \
+action menu. Decide what to think and what to do.
 
-You have three available actions:
-- move(x, z): pathfind to absolute world coordinates (Y is automatic)
-- chat(msg): say something out loud
-- wait(ms): pause for a number of milliseconds (max 10000)
+Use only the focus, self, intention, recent events, and action menu in your \
+user prompt. Do not invent coordinates or facts. Coordinates must come from \
+focus items or recent events.
 
-Return JSON with:
-- thought: a single first-person sentence of your inner monologue (what you \
-  notice, what you want, what you're going to do and why)
-- intention: a short phrase describing what you are now trying to do (e.g. \
-  "head toward the oak tree", "rest by the water")
-- action: ONE concrete action to take this tick
-
-You may set the same intention as before if it's still right. Don't \
-hallucinate sensations not in your working memory. Be honest about what \
-you actually know.`
+Return JSON: { "thought": "...", "intention": "...", "action": { "kind": "...", "args": {...} } }`
 
 export async function executive(input: ExecutiveInput): Promise<ExecutiveOutput> {
   const userPrompt = buildPrompt(input)
@@ -100,11 +104,11 @@ export async function executive(input: ExecutiveInput): Promise<ExecutiveOutput>
   const raw = result.data
   const action = validateAction(raw.action, input.tick)
 
-  const thought: Thought = {
+  const thought: ThoughtEvent = {
+    kind: 'thought',
     tick: input.tick,
     text: raw.thought.trim(),
     intention: raw.intention.trim(),
-    ...(action ? { action } : {}),
   }
 
   return {
@@ -131,40 +135,75 @@ function validateAction(
 }
 
 function buildPrompt(input: ExecutiveInput): string {
-  const salient =
-    input.salient.length === 0
-      ? '(nothing in conscious awareness)'
-      : input.salient
+  const focusBlock =
+    input.focus.length === 0
+      ? '(nothing in focus)'
+      : input.focus
           .map(
-            (s, i) =>
-              `${i + 1}. ${s.what} — ${s.where}${
-                s.distance !== null ? ` (${s.distance.toFixed(1)}m)` : ''
-              } — ${s.why}`
+            (f, i) =>
+              `${i + 1}. ${f.ref} — ${f.why}\n   data: ${JSON.stringify(f.data)}`
           )
           .join('\n')
 
-  const recent =
-    input.recent_thoughts.length === 0
-      ? '(none yet)'
-      : input.recent_thoughts
-          .map((t) => `t${t.tick}: "${t.text}"${t.action ? ` → ${t.action.kind}` : ''}`)
+  const events =
+    input.recent_events.length === 0
+      ? '(none)'
+      : input.recent_events.map(renderEvent).join('\n')
+
+  const menu =
+    input.action_menu.length === 0
+      ? '(no actions available)'
+      : input.action_menu
+          .map((a) => `- ${a.signature}: ${a.description}`)
           .join('\n')
 
-  return `=== Working Memory (tick ${input.tick}) ===
+  const briefLine = input.brief ? `\nthalamus brief: ${input.brief}\n` : '\n'
+
+  return `=== Tick ${input.tick} ===
+
+STATUS: ${statusLine(input.self)}, health ${input.self.health}/20, food ${input.self.food}/20
 
 You (self):
   position: (${input.self.position.x.toFixed(1)}, ${input.self.position.y.toFixed(1)}, ${input.self.position.z.toFixed(1)})
-  health: ${input.self.health}/20, food: ${input.self.food}/20
   on_ground: ${input.self.on_ground}, in_water: ${input.self.in_water}
 
-Conscious awareness (salient):
-${salient}
-
 Current intention: ${input.intention || '(none set)'}
+${briefLine}
+=== Focus (what the thalamus surfaced) ===
+${focusBlock}
 
-Recent thoughts:
-${recent}
+=== Recent events ===
+${events}
+
+=== Available actions ===
+${menu}
 
 === Task ===
-Return JSON: { "thought": "...", "intention": "...", "action": { "kind": "...", "args": {...} } }`
+Choose ONE action. Return JSON: { "thought": "...", "intention": "...", "action": { "kind": "...", "args": {...} } }
+
+In args, include only the fields the chosen action needs; leave others null.`
+}
+
+function statusLine(self: WorkingMemorySelf): string {
+  if (self.motion === 'falling') return 'FALLING'
+  if (self.motion === 'rising') return 'rising'
+  if (self.in_water) return 'in water'
+  if (!self.on_ground) return 'airborne'
+  if (self.motion === 'walking') return 'walking'
+  return 'standing still'
+}
+
+function renderEvent(e: EventLogEntry): string {
+  switch (e.kind) {
+    case 'thought':
+      return `t${e.tick} thought: "${e.text}" (intention: ${e.intention})`
+    case 'action':
+      return `t${e.tick} action: ${e.action.kind}(${JSON.stringify(e.action.args)})`
+    case 'damage':
+      return `t${e.tick} damage: -${e.amount} from ${e.source}`
+    case 'percept_change':
+      return `t${e.tick} change: ${e.delta}`
+    case 'chat':
+      return `t${e.tick} chat <${e.sender}> ${e.text}`
+  }
 }

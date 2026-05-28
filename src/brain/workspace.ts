@@ -1,103 +1,163 @@
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { logger } from '../logger.js'
 import type {
+  EventLogEntry,
   RawPercept,
-  SalientItem,
-  Thought,
   WorkingMemory,
   WorkingMemorySelf,
 } from './types.js'
 
-const RECENT_THOUGHTS_MAX = 5
+const EVENT_LOG_MAX = 50
+const RECENT_EVENT_DEFAULT = 10
 
 /**
- * The shared workspace — Atticus's working memory.
+ * Atticus's working memory — persistent, lives across ticks. Writers are
+ * single-purpose so the data-flow stays auditable. Each writer persists to
+ * disk if a `persistPath` was provided.
  *
- * Mutable in implementation, but only ever patched through these methods so
- * the data-flow stays auditable. Modules read slices via the `sliceFor*`
- * helpers, which keeps context-window cost per module explicit.
+ * Focus is NOT stored here — it's transient, produced by the Thalamus this
+ * tick and consumed by the PFC the same tick.
  */
 export class Workspace {
   private wm: WorkingMemory
+  private persistPath: string | null
 
-  constructor(identity: string, initialSelf: WorkingMemorySelf) {
-    this.wm = {
-      identity,
-      self: initialSelf,
-      salient: [],
-      recent_thoughts: [],
-      intention: '',
-      tick: 0,
-      timestamp: Date.now(),
-    }
+  constructor(wm: WorkingMemory, persistPath: string | null = null) {
+    this.wm = wm
+    this.persistPath = persistPath
   }
 
-  // --- Writers (one per module's permitted slot) ---
+  /** Build a fresh in-memory Workspace (no disk persistence). */
+  static init(identity: string, initialSelf: WorkingMemorySelf): Workspace {
+    return new Workspace(freshWm(identity, initialSelf), null)
+  }
 
-  /** Attention writes self + salient + tick. */
-  patchFromAttention(args: {
-    self: WorkingMemorySelf
-    salient: SalientItem[]
-    tick: number
-  }): void {
-    this.wm.self = args.self
-    this.wm.salient = args.salient
-    this.wm.tick = args.tick
+  /**
+   * Load WM from disk if a file exists at `persistPath`, otherwise build a
+   * fresh one. Tolerant of old WM file shapes from v0.3 (extra `salient` /
+   * `recent_thoughts` fields are ignored; missing `event_log` defaults to []).
+   */
+  static loadOrInit(
+    persistPath: string,
+    identity: string,
+    initialSelf: WorkingMemorySelf
+  ): Workspace {
+    if (existsSync(persistPath)) {
+      try {
+        const data = JSON.parse(readFileSync(persistPath, 'utf8')) as Partial<WorkingMemory> & {
+          recent_thoughts?: unknown
+          salient?: unknown
+        }
+        const wm: WorkingMemory = {
+          identity, // always overwrite from code constant
+          self: (data.self as WorkingMemorySelf | undefined) ?? initialSelf,
+          intention: data.intention ?? '',
+          event_log: (data.event_log as EventLogEntry[] | undefined) ?? [],
+          tick: data.tick ?? 0,
+          timestamp: data.timestamp ?? Date.now(),
+        }
+        logger.info(
+          { persistPath, tick: wm.tick, events: wm.event_log.length },
+          'restored working memory from disk'
+        )
+        return new Workspace(wm, persistPath)
+      } catch (err) {
+        logger.warn(
+          { persistPath, err: String(err) },
+          'failed to load WM — starting fresh'
+        )
+      }
+    }
+    return new Workspace(freshWm(identity, initialSelf), persistPath)
+  }
+
+  /** The tick of the most recent updateSelfAndTick call (0 if never patched). */
+  get lastTick(): number {
+    return this.wm.tick
+  }
+
+  // --- Writers ---
+
+  /** Schedule writes self + tick from the body's percept each loop. */
+  updateSelfAndTick(self: WorkingMemorySelf, tick: number): void {
+    this.wm.self = self
+    this.wm.tick = tick
     this.wm.timestamp = Date.now()
+    this.persist()
   }
 
-  /** Executive appends a thought and updates intention. */
-  patchFromExecutive(args: { thought: Thought; intention: string }): void {
-    this.wm.recent_thoughts.push(args.thought)
-    if (this.wm.recent_thoughts.length > RECENT_THOUGHTS_MAX) {
-      this.wm.recent_thoughts.splice(
-        0,
-        this.wm.recent_thoughts.length - RECENT_THOUGHTS_MAX
-      )
+  /** Append an event to the log, trimming to EVENT_LOG_MAX. */
+  appendEvent(event: EventLogEntry): void {
+    this.wm.event_log.push(event)
+    if (this.wm.event_log.length > EVENT_LOG_MAX) {
+      this.wm.event_log.splice(0, this.wm.event_log.length - EVENT_LOG_MAX)
     }
-    this.wm.intention = args.intention
+    this.persist()
   }
 
-  // --- Readers (slices, not the whole thing) ---
+  /** PFC sets the new intention each tick. */
+  setIntention(intention: string): void {
+    this.wm.intention = intention
+    this.persist()
+  }
 
-  /** Slice Attention reads: identity + intention + recent thoughts. */
-  sliceForAttention(): {
+  // --- Readers ---
+
+  /**
+   * The slice the Thalamus reads — identity + intention + recent events.
+   * Defaults to the last 10 events; pass `n` to override.
+   */
+  sliceForThalamus(n: number = RECENT_EVENT_DEFAULT): {
     identity: string
     intention: string
-    recent_thoughts: readonly Thought[]
+    recent_events: readonly EventLogEntry[]
   } {
     return {
       identity: this.wm.identity,
       intention: this.wm.intention,
-      recent_thoughts: this.wm.recent_thoughts,
+      recent_events: this.wm.event_log.slice(-n),
     }
   }
 
-  /** Slice Executive reads: identity + self + salient + intention + thoughts. */
-  sliceForExecutive(): {
-    identity: string
-    self: WorkingMemorySelf
-    salient: readonly SalientItem[]
-    intention: string
-    recent_thoughts: readonly Thought[]
-  } {
-    return {
-      identity: this.wm.identity,
-      self: this.wm.self,
-      salient: this.wm.salient,
-      intention: this.wm.intention,
-      recent_thoughts: this.wm.recent_thoughts,
-    }
+  /** The full event log, for hydration of `events` refs. */
+  get eventLog(): readonly EventLogEntry[] {
+    return this.wm.event_log
   }
 
   /** Full read — for logging and tests. Avoid using from brain modules. */
   raw(): Readonly<WorkingMemory> {
     return this.wm
   }
+
+  private persist(): void {
+    if (!this.persistPath) return
+    try {
+      mkdirSync(dirname(this.persistPath), { recursive: true })
+      writeFileSync(this.persistPath, JSON.stringify(this.wm, null, 2))
+    } catch (err) {
+      logger.warn(
+        { persistPath: this.persistPath, err: String(err) },
+        'failed to persist WM — continuing'
+      )
+    }
+  }
+}
+
+function freshWm(identity: string, initialSelf: WorkingMemorySelf): WorkingMemory {
+  return {
+    identity,
+    self: initialSelf,
+    intention: '',
+    event_log: [],
+    tick: 0,
+    timestamp: Date.now(),
+  }
 }
 
 /**
- * Derive the WorkingMemory `self` slot from a fresh RawPercept. The shape
- * is a strict subset of RawPercept.self (no inventory, no held_item — those
- * are sense-time-only).
+ * Derive the WorkingMemory `self` slot from a fresh RawPercept. Strict subset
+ * of RawPercept.self (no inventory, no held_item — those are sense-time-only).
  */
 export function selfFromPercept(p: RawPercept): WorkingMemorySelf {
   return {
@@ -108,5 +168,6 @@ export function selfFromPercept(p: RawPercept): WorkingMemorySelf {
     food: p.self.food,
     on_ground: p.self.on_ground,
     in_water: p.self.in_water,
+    motion: p.self.motion,
   }
 }

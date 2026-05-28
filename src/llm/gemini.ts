@@ -124,6 +124,8 @@ async function callGemini(opts: CallOpts): Promise<CompleteResult> {
           outputTokens: result.outputTokens,
           latencyMs: result.latencyMs,
           structured: Boolean(opts.responseSchema),
+          prompt: { system: opts.system, user: opts.user },
+          response: text,
         },
         'gemini call'
       )

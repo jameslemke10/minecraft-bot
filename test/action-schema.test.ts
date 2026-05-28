@@ -31,4 +31,37 @@ describe('ActionSchema', () => {
     const parsed = ActionSchema.safeParse({ kind: 'wait', args: { ms: 999_999 } })
     expect(parsed.success).toBe(false)
   })
+
+  it('accepts mine with coords', () => {
+    const parsed = ActionSchema.safeParse({ kind: 'mine', args: { x: 20, y: 64, z: 4 } })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('accepts place with block name', () => {
+    const parsed = ActionSchema.safeParse({
+      kind: 'place',
+      args: { x: 10, y: 65, z: 0, block: 'dirt' },
+    })
+    expect(parsed.success).toBe(true)
+  })
+
+  it('accepts craft with optional count', () => {
+    const a = ActionSchema.safeParse({ kind: 'craft', args: { item: 'oak_planks' } })
+    const b = ActionSchema.safeParse({ kind: 'craft', args: { item: 'oak_planks', count: 4 } })
+    expect(a.success).toBe(true)
+    expect(b.success).toBe(true)
+  })
+
+  it('accepts equip / attack / eat / sleep', () => {
+    expect(ActionSchema.safeParse({ kind: 'equip', args: { item: 'wooden_pickaxe' } }).success).toBe(true)
+    expect(ActionSchema.safeParse({ kind: 'attack', args: { entityId: 42 } }).success).toBe(true)
+    expect(ActionSchema.safeParse({ kind: 'eat', args: {} }).success).toBe(true)
+    expect(ActionSchema.safeParse({ kind: 'eat', args: { item: 'apple' } }).success).toBe(true)
+    expect(ActionSchema.safeParse({ kind: 'sleep', args: {} }).success).toBe(true)
+  })
+
+  it('rejects mine missing y coord', () => {
+    const parsed = ActionSchema.safeParse({ kind: 'mine', args: { x: 10, z: 5 } })
+    expect(parsed.success).toBe(false)
+  })
 })

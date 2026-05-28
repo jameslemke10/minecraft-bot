@@ -1,32 +1,5 @@
 import type { Bot } from 'mineflayer'
-import type { NearbyBlock, TerrainPercept, TimeOfDay, Weather } from '../../types.js'
-
-const NEARBY_RADIUS = 12
-const MAX_NEARBY_BLOCKS = 10
-
-/**
- * Block types Atticus should "notice" when scanning his surroundings.
- * Anything not in this set is ignored as background terrain.
- * Refine as needed: when he misses something obvious, add it here.
- */
-const NOTABLE_BLOCK_NAMES = new Set<string>([
-  // Wood
-  'oak_log', 'birch_log', 'spruce_log', 'jungle_log',
-  'acacia_log', 'dark_oak_log', 'mangrove_log', 'cherry_log',
-  // Fluids
-  'water', 'lava',
-  // Ores (overworld + deepslate variants)
-  'coal_ore', 'iron_ore', 'gold_ore', 'diamond_ore',
-  'copper_ore', 'emerald_ore', 'lapis_ore', 'redstone_ore',
-  'deepslate_coal_ore', 'deepslate_iron_ore', 'deepslate_gold_ore',
-  'deepslate_diamond_ore', 'deepslate_copper_ore',
-  'deepslate_emerald_ore', 'deepslate_lapis_ore', 'deepslate_redstone_ore',
-  // Civilization
-  'chest', 'crafting_table', 'furnace', 'smoker', 'blast_furnace',
-  'bed', 'white_bed', 'red_bed', 'blue_bed',
-  // Hazards
-  'fire', 'cactus', 'magma_block',
-])
+import type { TerrainPercept, TimeOfDay, Weather } from '../../types.js'
 
 export function senseTerrain(bot: Bot): TerrainPercept {
   return {
@@ -39,36 +12,25 @@ export function senseTerrain(bot: Bot): TerrainPercept {
   }
 }
 
-export function senseNearbyBlocks(bot: Bot): NearbyBlock[] {
-  if (!bot.entity?.position) return []
-  const me = bot.entity.position
-
-  const positions = bot.findBlocks({
-    matching: (block) => NOTABLE_BLOCK_NAMES.has(block.name),
-    maxDistance: NEARBY_RADIUS,
-    count: MAX_NEARBY_BLOCKS * 3, // over-collect, sort, slice
-  })
-
-  return positions
-    .map((pos) => {
-      const block = bot.blockAt(pos)
-      if (!block) return null
-      return {
-        type: block.name,
-        position: { x: pos.x, y: pos.y, z: pos.z },
-        distance: pos.distanceTo(me),
-      }
-    })
-    .filter((b): b is NearbyBlock => b !== null)
-    .sort((a, b) => a.distance - b.distance)
-    .slice(0, MAX_NEARBY_BLOCKS)
-}
-
 function getBiome(bot: Bot): string {
   try {
     const block = bot.blockAt(bot.entity.position)
-    const biome = block?.biome as { name?: string } | undefined
-    return biome?.name ?? 'unknown'
+    if (!block) return 'unknown'
+    // mineflayer 4.x: block.biome is the biome ID (number). Look up name via registry.
+    const biomeId = (block as { biome?: number | { id?: number; name?: string } }).biome
+    if (typeof biomeId === 'number') {
+      const biomeDef = bot.registry.biomes[biomeId]
+      return biomeDef?.name ?? 'unknown'
+    }
+    // Fallback for older shapes where biome is an object with .name.
+    if (biomeId && typeof biomeId === 'object') {
+      if (typeof biomeId.id === 'number') {
+        const biomeDef = bot.registry.biomes[biomeId.id]
+        if (biomeDef?.name) return biomeDef.name
+      }
+      if (typeof biomeId.name === 'string') return biomeId.name
+    }
+    return 'unknown'
   } catch {
     return 'unknown'
   }

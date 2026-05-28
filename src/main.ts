@@ -4,12 +4,21 @@ import { ATTICUS_IDENTITY } from './brain/identity.js'
 import { Workspace, selfFromPercept } from './brain/workspace.js'
 import { runBrain } from './brain/schedule.js'
 
+// Co-located with the Minecraft world: `pnpm server:reset` wipes both, so a
+// fresh world also means a fresh mind.
+const WM_PATH = 'server/data/atticus-wm.json'
+
 async function main(): Promise<void> {
   const body = await createMinecraftBody()
 
-  // Initialize working memory from a first sense() so `self` is real.
+  // Initialize working memory from a first sense() so `self` is real (only
+  // used if there's no prior WM on disk).
   const initial = await body.sense()
-  const workspace = new Workspace(ATTICUS_IDENTITY, selfFromPercept(initial))
+  const workspace = Workspace.loadOrInit(
+    WM_PATH,
+    ATTICUS_IDENTITY,
+    selfFromPercept(initial)
+  )
 
   const shutdown = (signal: string): void => {
     logger.info({ signal }, 'shutting down')
