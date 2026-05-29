@@ -6,6 +6,7 @@ import type { Block } from 'prismarine-block'
 import { ActionSchema, type Action } from './actions.js'
 import { actionFail, actionOk, type ActionResult } from '../../action-result.js'
 import { logger } from '../../../logger.js'
+import { describeMineable } from '../mine-hints.js'
 
 const { goals } = pathfinderPkg
 
@@ -76,12 +77,31 @@ async function doMove(
   { bot, movements }: ExecuteDeps,
   action: Extract<Action, { kind: 'move' }>
 ): Promise<ActionResult> {
-  const { x, z } = action.args
+  const { x, z, y } = action.args
   const me = bot.entity?.position
-  if (me && Math.abs(me.x - x) < 1 && Math.abs(me.z - z) < 1) return actionFail('already at target')
   bot.pathfinder.setMovements(movements)
+
+  if (y !== undefined) {
+    if (me && me.distanceTo(new MFVec3(x, y, z)) < 1.5) {
+      return actionFail(
+        `already at target (you are at ${fmtPos(me)}, target (${x}, ${y}, ${z})) — pick different coords`
+      )
+    }
+    await runGoal(bot, new goals.GoalNear(x, y, z, 1), MOVE_TIMEOUT_MS, { x, y, z })
+    return actionOk('pathfind complete')
+  }
+
+  if (me && Math.abs(me.x - x) < 1 && Math.abs(me.z - z) < 1) {
+    return actionFail(
+      `already at target x,z (you are at ${fmtPos(me)}; target x=${x} z=${z}) — same x,z won't move you; try different coords, add y to change height, or mine blocks below`
+    )
+  }
   await runGoal(bot, new goals.GoalNearXZ(x, z, 1), MOVE_TIMEOUT_MS, { x, z })
   return actionOk('pathfind complete')
+}
+
+function fmtPos(p: { x: number; y: number; z: number }): string {
+  return `(${p.x.toFixed(1)}, ${p.y.toFixed(1)}, ${p.z.toFixed(1)})`
 }
 
 async function doMine(
@@ -90,10 +110,15 @@ async function doMine(
 ): Promise<ActionResult> {
   const { bot } = deps
   const { x, y, z } = action.args
+  const allowed = describeMineable(bot).some((m) => m.x === x && m.y === y && m.z === z)
+  if (!allowed) {
+    return actionFail(
+      `(${x},${y},${z}) not in mineable list — only mine blocks listed in mineable (in reach/adjacent). Notable/x-ray ores are not valid until adjacent`
+    )
+  }
   const block = bot.blockAt(new MFVec3(x, y, z))
   if (!block || block.name === 'air') return actionFail('no block at coords')
-  await goNear(deps, x, y, z)
-  if (!bot.canDigBlock(block)) return actionFail('cannot dig (out of reach or wrong tool)')
+  if (!bot.canDigBlock(block)) return actionFail('cannot dig (wrong tool or obstructed)')
   await bot.dig(block)
   return actionOk(`mined ${block.name}`)
 }

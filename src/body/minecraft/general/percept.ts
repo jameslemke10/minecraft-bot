@@ -71,6 +71,15 @@ export interface EntityPercept {
   distance: number
 }
 
+/** Blocks breakable from current position — the ONLY valid mine(x,y,z) targets. */
+export interface MineableBlock {
+  id: string
+  name: string
+  pos: Vec3
+  dist: number
+  relation: string
+}
+
 /** World-level events the body observed since the last sense(). */
 export type WorldEvent =
   | { kind: 'damage'; tick: number; amount: number; source: string }
@@ -89,6 +98,8 @@ export interface Percept {
   self: SelfPercept
   world: WorldFacts
   surroundings: Surroundings
+  /** Blocks in tool reach right now — only these coords are valid for mine(). */
+  mineable: MineableBlock[]
   entities: EntityPercept[]
   new_events: WorldEvent[]
 }

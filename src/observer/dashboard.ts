@@ -180,9 +180,14 @@ function renderPage(viewer?: { thirdPerson?: string; firstPerson?: string }): st
   .pill.acting { background: #3d2a00; color: #ffc857; animation: pulse 1.2s ease-in-out infinite; }
   .pill.err { background: #5a1a1a; color: #ff8a8a; }
   @keyframes pulse { 50% { opacity: 0.65; } }
-  main { display: grid; grid-template-columns: minmax(320px, 420px) 1fr; gap: 0; min-height: calc(100vh - 90px); }
-  aside { overflow: auto; padding: 12px 14px; border-right: 1px solid #2a2f3a; }
-  .view-panel { padding: 12px 14px; background: #141820; }
+  main { display: grid; grid-template-columns: 1fr minmax(300px, 380px); gap: 0; min-height: calc(100vh - 82px); }
+  .camera { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #000; border-right: 1px solid #2a2f3a; }
+  .view-tabs { display: flex; gap: 4px; padding: 6px 8px; background: #141820; flex-shrink: 0; }
+  .view-tabs a { color: #9aa4b2; text-decoration: none; font-size: 12px; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
+  .view-tabs a.active { background: #252a34; color: #fff; }
+  .view-tabs a.ext { margin-left: auto; opacity: 0.85; }
+  iframe { flex: 1; width: 100%; border: 0; min-height: 280px; background: #000; }
+  aside { overflow: auto; padding: 12px 14px; }
   section { margin-bottom: 16px; }
   section h2 { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #8b949e; }
   .milestone { font-size: 14px; font-weight: 600; }
@@ -197,19 +202,18 @@ function renderPage(viewer?: { thirdPerson?: string; firstPerson?: string }): st
   .history { max-height: 180px; overflow: auto; font-size: 11px; line-height: 1.5; opacity: 0.9; }
   .verbs { display: flex; flex-wrap: wrap; gap: 4px; }
   .verbs span { background: #252a34; padding: 2px 8px; border-radius: 4px; font-size: 11px; }
-  .view-btns { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-  .view-btns a { display: inline-block; padding: 10px 16px; background: #252a34; color: #fff; text-decoration: none; border-radius: 6px; border: 1px solid #3a4150; }
-  .view-btns a:hover { background: #2f3644; border-color: #7ec8ff; }
-  .view-note { color: #8b949e; font-size: 12px; line-height: 1.5; max-width: 520px; }
   #status { margin-left: auto; font-size: 11px; color: #8b949e; }
-  @media (max-width: 800px) { main { grid-template-columns: 1fr; } aside { border-right: 0; border-bottom: 1px solid #2a2f3a; } }
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; grid-template-rows: 45vh auto; }
+    .camera { border-right: 0; border-bottom: 1px solid #2a2f3a; }
+  }
 </style>
 </head>
 <body>
 <div class="banner">
-  You are on the <strong>observer HUD</strong> (:3022).
-  For 3D world view open <a href="${third}" target="_blank" rel="noopener">3rd person (:3020)</a>
-  or <a href="${first}" target="_blank" rel="noopener">1st person (:3021)</a> in a <strong>new tab</strong> — embedded view often stays black.
+  <strong>Observer</strong> — 3D view + HUD. If the camera is black, open
+  <a href="${third}" target="_blank" rel="noopener">3rd person ↗</a> or
+  <a href="${first}" target="_blank" rel="noopener">1st person ↗</a> directly.
 </div>
 <header>
   <h1 id="agent">dimitri</h1>
@@ -220,19 +224,26 @@ function renderPage(viewer?: { thirdPerson?: string; firstPerson?: string }): st
   <span id="status">polling…</span>
 </header>
 <main>
-  <aside id="panel"><p class="hint">Loading state…</p></aside>
-  <div class="view-panel">
-    <section>
-      <h2>3D world view</h2>
-      <div class="view-btns">
-        <a href="${third}" target="_blank" rel="noopener">Open 3rd person ↗</a>
-        <a href="${first}" target="_blank" rel="noopener">Open 1st person ↗</a>
-      </div>
-      <p class="view-note">prismarine-viewer has no inventory HUD and shows dropped items as pink squares. This panel on the left is the reliable way to watch what Dimitri is doing.</p>
-    </section>
+  <div class="camera">
+    <div class="view-tabs">
+      <a href="#" class="active" id="tab-third">3rd person</a>
+      <a href="#" id="tab-first">1st person</a>
+      <a href="${third}" target="_blank" rel="noopener" class="ext">pop out ↗</a>
+    </div>
+    <iframe id="frame" src="${third}" title="minecraft viewer" allow="fullscreen"></iframe>
   </div>
+  <aside id="panel"><p class="hint">Loading state…</p></aside>
 </main>
 <script>
+const third = ${JSON.stringify(third)};
+const first = ${JSON.stringify(first)};
+document.getElementById('tab-third').onclick = (e) => { e.preventDefault(); setFrame(third, e.target); };
+document.getElementById('tab-first').onclick = (e) => { e.preventDefault(); setFrame(first, e.target); };
+function setFrame(url, tab) {
+  document.getElementById('frame').src = url;
+  document.querySelectorAll('.view-tabs a:not(.ext)').forEach(a => a.classList.remove('active'));
+  tab.classList.add('active');
+}
 function fmtInv(items, history) {
   if (!items.length) {
     const mining = (history || []).some(h => h.includes('mined '));

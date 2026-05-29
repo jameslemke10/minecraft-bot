@@ -2,6 +2,9 @@
  * Run Dimitri (continuous context-management arm) on the diamond task.
  * Run: pnpm dimitri        (unbounded — Ctrl+C to stop)
  *      MAX_TICKS=20 pnpm dimitri   (bounded smoke test)
+ *
+ * Fresh start (clear working memory): pnpm dimitri:reset  then restart dimitri.
+ * Bot position persists on the server until you /kill or rejoin at spawn.
  */
 import { logger } from '../../logger.js'
 import { config } from '../../config.js'
@@ -12,6 +15,7 @@ import { createGeneralBody } from '../../body/minecraft/general/index.js'
 import { diamondTask } from '../../task/diamond.js'
 import { WorkingMemory } from './wm.js'
 import { runDimitri } from './loop.js'
+import { dimitriModels } from './models.js'
 
 const DATA_DIR = 'src/agents/dimitri/data'
 const WM_PATH = `${DATA_DIR}/wm.json`
@@ -76,6 +80,7 @@ async function main(): Promise<void> {
       goal: task.goal,
       maxTicks,
       runDir: runLog.runDir,
+      models: dimitriModels,
       observer: observer?.url,
       viewerThird: config.viewer.enabled ? `http://localhost:${VIEWER_THIRD}` : undefined,
       viewerFirst: config.viewer.enabled ? `http://localhost:${VIEWER_FIRST}` : undefined,

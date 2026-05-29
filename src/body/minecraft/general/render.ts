@@ -22,6 +22,16 @@ export function renderPercept(p: Percept): string {
   const near = s.near.length === 0 ? '  (open space all around)' : s.near.map(blockLine).join('\n')
   const notable = s.notable.length === 0 ? '  (none)' : s.notable.map(blockLine).join('\n')
 
+  const mineable =
+    p.mineable.length === 0
+      ? '  (none in reach — move closer or clear adjacent blocks first)'
+      : p.mineable
+          .map(
+            (m) =>
+              `  - ${m.id}: ${m.name} (${m.pos.x},${m.pos.y},${m.pos.z}) ${m.dist}m [${m.relation}]`
+          )
+          .join('\n')
+
   const entities =
     p.entities.length === 0
       ? '(none)'
@@ -41,10 +51,13 @@ inventory: ${inv}
 world: ${p.world.biome}, ${p.world.time_of_day}, ${p.world.weather}
 
 standing on: ${standing}
-nearby blocks (within ${s.near_radius}; absent coords = open/air):
+nearby blocks (within ${s.near_radius}; walls/floor/dirt/stone you could touch):
 ${near}
-notable blocks (out to ${s.radius}; ores/water/lava/etc):
+notable blocks (x-ray radar out to ${s.radius}; ores/water/lava — may be BLOCKED by other blocks, NOT valid mine targets):
 ${notable}
+
+mineable NOW (ONLY valid mine(x,y,z) targets — in tool reach, adjacent):
+${mineable}
 
 entities:
 ${entities}

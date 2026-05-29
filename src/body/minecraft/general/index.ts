@@ -9,6 +9,7 @@ export type {
   Surroundings,
   BlockAt,
   EntityPercept,
+  MineableBlock,
   WorldEvent,
   InventoryItem,
 } from './percept.js'

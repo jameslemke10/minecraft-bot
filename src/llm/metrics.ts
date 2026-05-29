@@ -9,6 +9,7 @@
  *   - gemini-2.5-flash      : $0.30 / $2.50
  *   - gemini-2.5-pro        : $1.25 / $10.00
  * Update PRICING if the models or rates change.
+ * Gemini 3.x rates: https://ai.google.dev/gemini-api/docs/pricing
  */
 
 interface Price {
@@ -17,9 +18,15 @@ interface Price {
 }
 
 const PRICING: Record<string, Price> = {
+  // Gemini 2.5 (Atticus / Brutus defaults)
   'gemini-2.5-flash-lite': { inPerM: 0.1, outPerM: 0.4 },
   'gemini-2.5-flash': { inPerM: 0.3, outPerM: 2.5 },
   'gemini-2.5-pro': { inPerM: 1.25, outPerM: 10.0 },
+  // Gemini 3.x (Dimitri defaults)
+  'gemini-3.1-flash-lite': { inPerM: 0.25, outPerM: 1.5 },
+  'gemini-3.5-flash': { inPerM: 1.5, outPerM: 9.0 },
+  'gemini-3.1-pro-preview': { inPerM: 2.0, outPerM: 12.0 },
+  'gemini-3-flash-preview': { inPerM: 0.5, outPerM: 3.0 },
 }
 
 interface StageStats {

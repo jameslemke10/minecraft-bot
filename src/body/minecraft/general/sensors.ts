@@ -3,6 +3,7 @@ import { Vec3 as MFVec3 } from 'vec3'
 import type {
   BlockAt,
   EntityPercept,
+  MineableBlock,
   Percept,
   SelfPercept,
   Surroundings,
@@ -11,9 +12,10 @@ import type {
   WorldFacts,
 } from './percept.js'
 import type { WorldState } from './world-state.js'
+import { describeMineable } from '../mine-hints.js'
 
 const CUBE_RADIUS = 8 // ±8 → bounded local awareness ("bounded x-ray")
-const NEAR_RADIUS = 1 // touching shell: the 26 cells you're against (mostly air → usually <15 blocks)
+const NEAR_RADIUS = 2 // touching shell + one layer out (see blocking dirt/stone)
 const NEAR_CAP = 30
 const NOTABLE_CAP = 40
 const ENTITY_RADIUS = 16
@@ -41,6 +43,7 @@ export function buildPercept(bot: Bot, world: WorldState, tick: number): Percept
     self: senseSelf(bot, motion),
     world: senseWorld(bot),
     surroundings: senseSurroundings(bot),
+    mineable: senseMineable(bot),
     entities: senseEntities(bot),
     new_events: world.drainEvents(tick),
   }
@@ -129,6 +132,18 @@ function senseSurroundings(bot: Bot): Surroundings {
     near: near.slice(0, NEAR_CAP),
     notable: notable.slice(0, NOTABLE_CAP),
   }
+}
+
+function senseMineable(bot: Bot): MineableBlock[] {
+  const me = bot.entity?.position
+  if (!me) return []
+  return describeMineable(bot).map((m) => ({
+    id: m.id,
+    name: m.block,
+    pos: { x: m.x, y: m.y, z: m.z },
+    dist: Math.round(Math.hypot(m.x + 0.5 - me.x, m.y + 0.5 - me.y, m.z + 0.5 - me.z) * 10) / 10,
+    relation: m.relation,
+  }))
 }
 
 function senseEntities(bot: Bot): EntityPercept[] {

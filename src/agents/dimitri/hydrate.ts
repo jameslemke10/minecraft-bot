@@ -1,4 +1,4 @@
-import { ACTION_DOCS, type Percept } from '../../body/minecraft/general/index.js'
+import { ACTION_DOCS, type MineableBlock, type Percept } from '../../body/minecraft/general/index.js'
 import { logger } from '../../logger.js'
 import type { WorkingMemory, HistoryEntry, Note } from './wm.js'
 
@@ -37,7 +37,12 @@ export function hydrate(pass: readonly string[], wm: WorkingMemory, percept: Per
       surroundings.push('notable:\n' + renderBlocks(percept.surroundings.notable))
     } else if (r.startsWith('notable:')) {
       const b = percept.surroundings.notable[idx(r)]
-      if (b) surroundings.push(`notable: ${b.name} (${b.pos.x},${b.pos.y},${b.pos.z}) ${b.dist}m`)
+      if (b) surroundings.push(`notable (x-ray, NOT mineable): ${b.name} (${b.pos.x},${b.pos.y},${b.pos.z}) ${b.dist}m`)
+    } else if (r === 'mineable') {
+      surroundings.push('mineable (ONLY valid mine targets):\n' + renderMineable(percept.mineable))
+    } else if (r.startsWith('mineable:')) {
+      const m = findMineable(percept, r)
+      if (m) surroundings.push(`mineable: ${m.name} (${m.pos.x},${m.pos.y},${m.pos.z}) ${m.dist}m [${m.relation}]`)
     } else if (r.startsWith('ent:')) {
       const id = Number(r.slice(4))
       const e = percept.entities.find((x) => x.id === id)
@@ -89,6 +94,20 @@ function renderStandingOn(p: Percept): string {
 function renderBlocks(blocks: readonly { name: string; pos: { x: number; y: number; z: number }; dist: number }[]): string {
   if (blocks.length === 0) return '  (none)'
   return blocks.map((b) => `  - ${b.name} (${b.pos.x},${b.pos.y},${b.pos.z}) ${b.dist}m`).join('\n')
+}
+
+function renderMineable(blocks: readonly MineableBlock[]): string {
+  if (blocks.length === 0) return '  (none in reach — move closer or mine adjacent blocks first)'
+  return blocks
+    .map((m) => `  - ${m.id}: ${m.name} (${m.pos.x},${m.pos.y},${m.pos.z}) ${m.dist}m [${m.relation}]`)
+    .join('\n')
+}
+
+function findMineable(p: Percept, ref: string): MineableBlock | undefined {
+  const byId = p.mineable.find((m) => m.id === ref)
+  if (byId) return byId
+  const n = Number(ref.split(':')[1])
+  return Number.isFinite(n) ? p.mineable[n] : undefined
 }
 
 function renderEntry(entry: HistoryEntry | Note): string {

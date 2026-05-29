@@ -1,10 +1,10 @@
 import { Type, type Schema } from '@google/genai'
-import { config } from '../../config.js'
 import { completeJson } from '../../llm/gemini.js'
 import type { Metrics } from '../../llm/metrics.js'
 import type { RunLog } from '../run-log.js'
 import { ACTION_DOCS, type Percept } from '../../body/minecraft/general/index.js'
 import type { WorkingMemory, HistoryEntry, Note } from './wm.js'
+import { dimitriModels } from './models.js'
 
 /**
  * The curator — cheap, pure context-management. Reads the FULL working memory
@@ -37,7 +37,12 @@ Each tick you see Dimitri's FULL working memory and the live percept. You do TWO
 
 2) remove: garbage-collect the working memory so it stays small. You may ONLY remove history (h#) and note (n#) ids. You can NEVER remove the goal. Knowledge survives only if it was written to a note — raw history (h#) is fodder; drop stale/superseded entries. Keep the most recent few history entries so the executive isn't blind to what just happened.
 
-Return JSON: { "pass": ["goal","self","standing_on","notable:2","n1","h7","act:mine", ...], "remove": ["h1","h2", ...] }`
+Spatial rules for pass[]:
+- near / near:i — solid blocks within ~2 blocks (walls, floor, dirt blocking you). Pass when movement or digging is in play.
+- mineable / mineable:i — blocks Dimitri can mine RIGHT NOW. ALWAYS pass "mineable" (or specific mineable:i) when act:mine is in play. These are the ONLY valid mine(x,y,z) coords.
+- notable / notable:i — x-ray radar (ores through walls). Pass for planning/awareness only. NEVER pass notable as a substitute for mineable — ores in notable may be blocked or out of reach.
+
+Return JSON: { "pass": ["goal","self","standing_on","near","mineable","notable:2","n1","h7","act:mine", ...], "remove": ["h1","h2", ...] }`
 }
 
 export async function curate(
@@ -49,7 +54,7 @@ export async function curate(
   const result = await completeJson<CuratorOutput>({
     caller: 'curator',
     metrics,
-    model: config.gemini.modelFast,
+    model: dimitriModels.curator,
     system: system(),
     user: buildPrompt(wm, percept),
     schema: SCHEMA,
@@ -102,6 +107,9 @@ function renderPerceptWithRefs(p: Percept): string {
   const notable = p.surroundings.notable
     .map((b, i) => `  notable:${i} — ${b.name} (${b.pos.x},${b.pos.y},${b.pos.z}) ${b.dist}m`)
     .join('\n')
+  const mineable = p.mineable
+    .map((m) => `  ${m.id} — ${m.name} (${m.pos.x},${m.pos.y},${m.pos.z}) ${m.dist}m [${m.relation}]`)
+    .join('\n')
   const ents = p.entities
     .map((e) => `  ent:${e.id} — ${e.kind} (${e.distance}m)`)
     .join('\n')
@@ -112,9 +120,11 @@ function renderPerceptWithRefs(p: Percept): string {
 
   return `ref "self": pos (${fix(p.self.position.x)},${fix(p.self.position.y)},${fix(p.self.position.z)}) health ${p.self.health}/20 food ${p.self.food}/20 held ${p.self.held_item ?? 'nothing'} | inventory: ${inv} | ${p.world.biome}, ${p.world.time_of_day}, ${p.world.weather}
 ref "standing_on": ${standing}
-near (ref near:i):
+near within ${p.surroundings.near_radius} (ref near:i — walls/floor/dirt you could touch):
 ${near || '  (open)'}
-notable out to ${p.surroundings.radius} (ref notable:i):
+mineable NOW (ref mineable or mineable:i — ONLY valid mine targets):
+${mineable || '  (none in reach)'}
+notable x-ray out to ${p.surroundings.radius} (ref notable:i — ores/water/lava; may be BLOCKED, NOT valid mine coords):
 ${notable || '  (none)'}
 entities (ref ent:id):
 ${ents || '  (none)'}`

@@ -35,6 +35,7 @@ export async function runDimitri(
 ): Promise<void> {
   const { task, metrics, runLog, observer, maxTicks, stallLimit = 60, signal } = opts
   const progressPath = join(runLog.runDir, 'progress.jsonl')
+  const contextPath = join(runLog.runDir, 'context.jsonl')
 
   let tick = 0
   let bestScore = -1
@@ -105,14 +106,27 @@ export async function runDimitri(
         outcome = await body.execute(exec.action)
         wm.addOutcome(tick, exec.action.kind, outcome.ok, outcome.message)
       } else {
-        outcome = { ok: false, message: 'no valid action chosen' }
-        wm.addOutcome(tick, 'none', false, outcome.message)
+        const kind = exec.attemptedKind ?? 'none'
+        const message = exec.actionError ?? 'no valid action chosen'
+        outcome = { ok: false, message }
+        wm.addOutcome(tick, kind, false, message)
       }
       observer?.publish({
         outcome,
         recentHistory: formatRecentHistory(wm.recentHistory(8)),
         phase: 'idle',
         phaseDetail: undefined,
+      })
+
+      logContext(contextPath, {
+        tick,
+        pass,
+        remove,
+        verbs,
+        hydrated: context,
+        thought: exec.thought,
+        action: exec.action,
+        outcome,
       })
 
       runLog.recordTick({
@@ -147,6 +161,26 @@ function renderEvent(e: WorldEvent): string {
 function logProgress(
   path: string,
   row: { tick: number; score: number; label: string; history: number; notes: number }
+): void {
+  try {
+    appendFileSync(path, JSON.stringify(row) + '\n')
+  } catch {
+    /* best effort */
+  }
+}
+
+function logContext(
+  path: string,
+  row: {
+    tick: number
+    pass: readonly string[]
+    remove: readonly string[]
+    verbs: readonly string[]
+    hydrated: string
+    thought: string
+    action: Action | null
+    outcome: { ok: boolean; message: string }
+  }
 ): void {
   try {
     appendFileSync(path, JSON.stringify(row) + '\n')

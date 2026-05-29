@@ -12,7 +12,10 @@ import type { ActionDoc } from '../../types.js'
 const coords = { x: z.number().int(), y: z.number().int(), z: z.number().int() }
 
 export const ActionSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('move'), args: z.object({ x: z.number(), z: z.number() }) }),
+  z.object({
+    kind: z.literal('move'),
+    args: z.object({ x: z.number(), z: z.number(), y: z.number().int().optional() }),
+  }),
   z.object({ kind: z.literal('wait'), args: z.object({ ms: z.number().int().positive().max(60_000) }) }),
   z.object({ kind: z.literal('chat'), args: z.object({ msg: z.string().min(1).max(256) }) }),
   z.object({ kind: z.literal('mine'), args: z.object(coords) }),
@@ -52,14 +55,15 @@ export type ActionKind = Action['kind']
 export const ACTION_DOCS: readonly ActionDoc[] = [
   {
     name: 'move',
-    signature: 'move(x, z)',
-    description: 'Pathfind to absolute world coords (Y is automatic). Travel across the surface or to a known spot.',
+    signature: 'move(x, z, y?)',
+    description:
+      'Pathfind to absolute world coords. x and z are required; optional y targets a specific height (use to descend from trees or climb). Without y, pathfinding picks the surface Y at that x,z — repeating the same x,z when you are already there returns "already at target".',
   },
   {
     name: 'mine',
     signature: 'mine(x, y, z)',
     description:
-      'Walk into reach and break the block at (x,y,z). Coords must come from your surroundings. Fails if out of reach or your tool cannot break it — read the outcome and adapt.',
+      'Break a block at (x,y,z). Use ONLY coordinates from the mineable list in your percept — those are in reach right now. Notable/x-ray ores are NOT valid mine targets until they appear in mineable.',
   },
   {
     name: 'place',
