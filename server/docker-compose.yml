@@ -25,21 +25,18 @@ services:
       SPAWN_PROTECTION: "0"
       ALLOW_FLIGHT: "TRUE"
       MOTD: "Minecraft Bot Dev Server"
-      # World generation: SUPERFLAT plains with trees. Paper silently ignores
-      # single_biome, so we use the flat preset which is 100% deterministic:
-      # - biome plains (grass surface, animals spawn, sparse oak trees)
-      # - features:true → scattered oaks, grass, flowers
-      # - structures:{} → no villages
-      # - lakes:false → no water holes
-      # - layers lift the grass surface to y=64 (1 bedrock + 124 stone +
-      #   3 dirt + 1 grass), so spawn is flat and low — no canopy/hills.
+      # World generation: NORMAL terrain with a FIXED SEED, so diamonds sit at
+      # realistic depth (y≈-58) and reaching them requires the full tech tree +
+      # descent — the long horizon the context-management experiment needs. The
+      # fixed seed makes runs reproducible; the harness can vary SEED later to
+      # replicate across biomes/spawns (paired: same seed for both arms).
       # IMPORTANT: world-gen changes only apply on a full regen. After editing
       # this, run `pnpm server:reset` (not just `server:up`).
-      LEVEL: "bot-world-flatplains"
-      LEVEL_TYPE: "minecraft:flat"
-      GENERATOR_SETTINGS: '{"biome":"minecraft:plains","features":true,"lakes":false,"structures":{},"layers":[{"block":"minecraft:bedrock","height":1},{"block":"minecraft:stone","height":124},{"block":"minecraft:dirt","height":3},{"block":"minecraft:grass_block","height":1}]}'
-      # Auto-op the bot so it can teleport itself / use commands later
-      OPS: "Atticus,Brutus"
+      LEVEL: "bot-world-normal"
+      LEVEL_TYPE: "minecraft:normal"
+      SEED: "4815162342"
+      # Auto-op the bots so they can teleport / use commands later.
+      OPS: "Atticus,Brutus,Dimitri,Baseline"
     tty: true
     stdin_open: true
     restart: unless-stopped

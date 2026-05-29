@@ -156,9 +156,9 @@ export interface BodyHints {
  * describeActions() declares the verbs this body supports.
  * describeBodyHints() optional — live recipe/craft info for the brain.
  */
-export interface Body<TAction = unknown> {
+export interface Body<TAction = unknown, TPercept = RawPercept> {
   envName: string
-  sense(): Promise<RawPercept>
+  sense(): Promise<TPercept>
   execute(action: TAction): Promise<ActionResult>
   disconnect(): void
   describeActions(): readonly ActionDoc[]
