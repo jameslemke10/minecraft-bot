@@ -9,6 +9,7 @@
     "dev:brutus": "tsx watch src/main.ts -- brutus",
     "dev:both": "tsx watch src/main.ts -- atticus brutus",
     "dimitri": "tsx src/agents/dimitri/run.ts",
+    "dimitri:watch": "tsx src/tools/dimitri-watch.ts",
     "start": "tsx src/main.ts",
     "probe": "tsx src/tools/probe-percept.ts",
     "sense:check": "tsx src/tools/sense-check.ts",

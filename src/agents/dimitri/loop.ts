@@ -6,7 +6,8 @@ import type { RunLog } from '../run-log.js'
 import type { Body } from '../../body/types.js'
 import type { Action, Percept, WorldEvent } from '../../body/minecraft/general/index.js'
 import type { Task } from '../../task/types.js'
-import type { WorkingMemory } from './wm.js'
+import type { ObserverDashboard } from '../../observer/dashboard.js'
+import type { WorkingMemory, HistoryEntry } from './wm.js'
 import { curate } from './curator.js'
 import { hydrate } from './hydrate.js'
 import { decide } from './executive.js'
@@ -15,6 +16,7 @@ export interface DimitriLoopOptions {
   task: Task
   metrics: Metrics
   runLog: RunLog
+  observer?: ObserverDashboard
   maxTicks?: number
   /** End the run if the milestone hasn't advanced in this many ticks. */
   stallLimit?: number
@@ -31,7 +33,7 @@ export async function runDimitri(
   wm: WorkingMemory,
   opts: DimitriLoopOptions
 ): Promise<void> {
-  const { task, metrics, runLog, maxTicks, stallLimit = 60, signal } = opts
+  const { task, metrics, runLog, observer, maxTicks, stallLimit = 60, signal } = opts
   const progressPath = join(runLog.runDir, 'progress.jsonl')
 
   let tick = 0
@@ -45,7 +47,9 @@ export async function runDimitri(
     }
     try {
       // 1. Sense (reflects all prior actions).
+      observer?.setPhase('sensing')
       const percept = await body.sense()
+      observer?.publish(perceptSnapshot(tick, percept, task, wm))
 
       // 2. Harness folds world-events into history.
       for (const ev of percept.new_events) wm.addEvent(tick, renderEvent(ev))
@@ -70,13 +74,16 @@ export async function runDimitri(
       }
 
       // 4. Curator: select + GC (ids only).
+      observer?.setPhase('curating')
       const { pass, remove } = await curate(wm, percept, metrics, runLog)
 
       // 5. Hydrate against current WM (before removal), then apply GC.
       const { context, verbs } = hydrate(pass, wm, percept)
       if (remove.length) wm.remove(remove)
+      observer?.publish({ curator: { pass, remove }, verbs })
 
       // 6. Executive: think / note / act.
+      observer?.setPhase('deciding')
       const exec = await decide(context, verbs, tick, metrics, runLog)
       wm.addThought(tick, exec.thought)
       for (const note of exec.notes_to_add) wm.addNote(tick, note)
@@ -86,13 +93,34 @@ export async function runDimitri(
       )
 
       // 7. Act.
+      observer?.publish({
+        thought: exec.thought,
+        action: exec.action ?? undefined,
+        recentHistory: formatRecentHistory(wm.recentHistory(8)),
+      })
+      let outcome: { ok: boolean; message: string }
       if (exec.action) {
         wm.addAction(tick, exec.action)
-        const outcome = await body.execute(exec.action)
+        observer?.setPhase('acting', actionLabel(exec.action))
+        outcome = await body.execute(exec.action)
         wm.addOutcome(tick, exec.action.kind, outcome.ok, outcome.message)
       } else {
-        wm.addOutcome(tick, 'none', false, 'no valid action chosen')
+        outcome = { ok: false, message: 'no valid action chosen' }
+        wm.addOutcome(tick, 'none', false, outcome.message)
       }
+      observer?.publish({
+        outcome,
+        recentHistory: formatRecentHistory(wm.recentHistory(8)),
+        phase: 'idle',
+        phaseDetail: undefined,
+      })
+
+      runLog.recordTick({
+        tick,
+        thought: exec.thought,
+        action: exec.action,
+        action_outcome: outcome,
+      })
 
       wm.persist()
     } catch (err) {
@@ -125,4 +153,58 @@ function logProgress(
   } catch {
     /* best effort */
   }
+}
+
+function perceptSnapshot(
+  tick: number,
+  percept: Percept,
+  task: Task,
+  wm: WorkingMemory
+): Parameters<ObserverDashboard['publish']>[0] {
+  const inv = aggregateInventory(percept.self.inventory)
+  return {
+    tick,
+    milestone: task.progress(percept),
+    self: {
+      position: percept.self.position,
+      health: percept.self.health,
+      food: percept.self.food,
+      held_item: percept.self.held_item,
+      inventory: inv,
+    },
+    recentHistory: formatRecentHistory(wm.recentHistory(8)),
+  }
+}
+
+function aggregateInventory(
+  items: Percept['self']['inventory']
+): Array<{ name: string; count: number }> {
+  const counts = new Map<string, number>()
+  for (const it of items) counts.set(it.name, (counts.get(it.name) ?? 0) + it.count)
+  return [...counts.entries()]
+    .map(([name, count]) => ({ name, count }))
+    .sort((a, b) => a.name.localeCompare(b.name))
+}
+
+function formatRecentHistory(entries: readonly HistoryEntry[]): string[] {
+  return entries.map((e) => {
+    switch (e.kind) {
+      case 'thought':
+        return `[t${e.tick} thought] ${truncate(e.text, 120)}`
+      case 'action':
+        return `[t${e.tick} action] ${actionLabel(e.action)}`
+      case 'outcome':
+        return `[t${e.tick} outcome] ${e.actionKind} → ${e.ok ? 'ok' : 'fail'}: ${e.message}`
+      case 'event':
+        return `[t${e.tick} event] ${e.text}`
+    }
+  })
+}
+
+function actionLabel(action: Action): string {
+  return `${action.kind}(${JSON.stringify(action.args)})`
+}
+
+function truncate(text: string, max: number): string {
+  return text.length <= max ? text : text.slice(0, max - 1) + '…'
 }

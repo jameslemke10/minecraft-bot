@@ -20,6 +20,9 @@ const ConfigSchema = z.object({
   viewer: z.object({
     enabled: z.coerce.boolean().default(true),
   }),
+  observer: z.object({
+    enabled: z.coerce.boolean().default(true),
+  }),
 })
 
 export type Config = z.infer<typeof ConfigSchema>
@@ -39,5 +42,8 @@ export const config: Config = ConfigSchema.parse({
   logLevel: process.env.LOG_LEVEL,
   viewer: {
     enabled: process.env.VIEWER_ENABLED ?? true,
+  },
+  observer: {
+    enabled: process.env.OBSERVER_ENABLED ?? true,
   },
 })

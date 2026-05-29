@@ -2,7 +2,7 @@ import { createWriteStream, mkdirSync, writeFileSync, type WriteStream } from 'n
 import { join } from 'node:path'
 import type { ActionResult } from '../body/action-result.js'
 import type { BodyHints } from '../body/types.js'
-import type { Action, DriveSignals, DrivesOutput, ThalamusOutput } from '../brain/types.js'
+import type { DriveSignals, DrivesOutput, ThalamusOutput } from '../brain/types.js'
 import type { Metrics, MetricsSummary, DriveAggregate } from '../llm/metrics.js'
 
 export interface TickLogEntry {
@@ -11,7 +11,7 @@ export interface TickLogEntry {
   drives?: { signals: DriveSignals; felt: string[] }
   thought?: string
   intention?: string
-  action?: Action | null
+  action?: unknown
   action_outcome?: ActionResult
   body_hints?: BodyHints
 }
